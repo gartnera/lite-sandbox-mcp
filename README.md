@@ -79,6 +79,53 @@ lite-sandbox-mcp config extra-commands list
 lite-sandbox-mcp config extra-commands remove curl
 ```
 
+## Git Support
+
+Git commands are enabled by default with granular permission levels that can be configured:
+
+```yaml
+git:
+  local_read: true   # git status, log, diff, show (default: true)
+  local_write: true  # git add, commit, branch, tag (default: true)
+  remote_read: true  # git fetch, pull, clone (default: true)
+  remote_write: false # git push (default: false)
+```
+
+Remote write operations (`git push`) are disabled by default since they affect shared state. Enable them only if you want to allow Claude to push commits:
+
+```bash
+# Show current git configuration
+lite-sandbox-mcp config show
+
+# Edit config file to enable git push
+# Add 'remote_write: true' under the git section
+```
+
+Git commands use runtime path validation to ensure repository paths stay within allowed directories, even when variables are expanded (e.g., `git -C $REPO_DIR status` validates the expanded path).
+
+## Go Runtime Support
+
+Go commands (`go build`, `go test`, `go mod`, etc.) are disabled by default. Enable them via config:
+
+```yaml
+runtimes:
+  go:
+    enabled: true    # Allow go build, test, mod, etc. (default: false)
+    generate: false  # Allow go generate (default: false)
+```
+
+Go runtime commands use the same runtime path validation as other commands to ensure file paths stay within allowed directories. This enables safe development workflows like:
+
+```bash
+go mod init myproject
+go test ./...
+go build -o mybinary
+```
+
+The `go generate` subcommand requires explicit opt-in since it can execute arbitrary code specified in source files.
+
+See `e2e/claude/test_go_runtime_e2e.py` for a complete example demonstrating a Go development workflow (module init, testing, git workflow) using only the sandboxed tool.
+
 ## Security Model
 
 Commands go through multiple validation layers:
@@ -130,3 +177,15 @@ go build -o lite-sandbox-mcp
 go test ./...              # Run all tests
 go test -v ./tool/...      # Run tool package tests with verbose output
 ```
+
+### E2E Testing
+
+End-to-end tests verify real-world usage via the Claude Agent SDK. They test that Claude can successfully use the sandboxed MCP tool without falling back to built-in Bash:
+
+```bash
+cd e2e/claude
+uv run pytest -v          # Run all e2e tests
+uv run pytest -v -k test_go_project_workflow  # Run specific test
+```
+
+**Showcase test**: `e2e/claude/test_go_runtime_e2e.py` demonstrates a complete Go development workflow — module initialization, writing code and tests, running `go test`, and creating a git commit — all using only the `bash_sandboxed` MCP tool with no built-in Bash calls. This test shows how the sandbox enables safe, autonomous development workflows for AI coding agents.
