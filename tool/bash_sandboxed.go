@@ -164,10 +164,45 @@ var allowedCommands = map[string]bool{
 	"apropos": true,
 }
 
+// commandArgValidators is a registry of per-command argument validation functions.
+// Commands with dangerous flags (e.g., find -exec, find -delete) register a
+// validator here to block those flags while still allowing the command itself.
+var commandArgValidators = map[string]func(args []*syntax.Word) error{
+	"find": validateFindArgs,
+}
+
+// blockedFindFlags lists find flags that execute commands or modify the filesystem.
+var blockedFindFlags = map[string]string{
+	"-exec":    "executes arbitrary commands",
+	"-execdir": "executes arbitrary commands",
+	"-ok":      "executes arbitrary commands",
+	"-okdir":   "executes arbitrary commands",
+	"-delete":  "deletes files",
+	"-fls":     "writes to a file",
+	"-fprint":  "writes to a file",
+	"-fprint0": "writes to a file",
+	"-fprintf": "writes to a file",
+}
+
+// validateFindArgs checks that find is not called with dangerous flags.
+func validateFindArgs(args []*syntax.Word) error {
+	for _, arg := range args {
+		lit := arg.Lit()
+		if lit == "" {
+			continue
+		}
+		if reason, blocked := blockedFindFlags[lit]; blocked {
+			return fmt.Errorf("find flag %q is not allowed: %s", lit, reason)
+		}
+	}
+	return nil
+}
+
 // validate walks the parsed AST and enforces:
 // 1. All commands must be in the allowedCommands whitelist
 // 2. No redirections (>, >>, <, etc.) are permitted
 // 3. No process substitutions are permitted
+// 4. Per-command argument validators (e.g., blocking find -exec)
 func validate(f *syntax.File) error {
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
@@ -190,6 +225,12 @@ func validate(f *syntax.File) error {
 				if !allowedCommands[cmdName] {
 					validationErr = fmt.Errorf("command %q is not allowed", cmdName)
 					return false
+				}
+				if validator, ok := commandArgValidators[cmdName]; ok {
+					if err := validator(n.Args); err != nil {
+						validationErr = err
+						return false
+					}
 				}
 			}
 		case *syntax.ProcSubst:

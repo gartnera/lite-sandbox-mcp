@@ -381,6 +381,64 @@ func TestValidate_DynamicCommandBlocked(t *testing.T) {
 	}
 }
 
+func TestValidate_BlockedFindFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"find -exec rm", `find . -exec rm {} \;`, `find flag "-exec" is not allowed`},
+		{"find -delete", `find . -delete`, `find flag "-delete" is not allowed`},
+		{"find -execdir python", `find . -execdir python {} +`, `find flag "-execdir" is not allowed`},
+		{"find -ok", `find . -ok rm {} \;`, `find flag "-ok" is not allowed`},
+		{"find -okdir", `find . -okdir rm {} \;`, `find flag "-okdir" is not allowed`},
+		{"find -fls", `find . -fls /tmp/out`, `find flag "-fls" is not allowed`},
+		{"find -fprint", `find . -fprint /tmp/out`, `find flag "-fprint" is not allowed`},
+		{"find -fprint0", `find . -fprint0 /tmp/out`, `find flag "-fprint0" is not allowed`},
+		{"find -fprintf", `find . -fprintf /tmp/out '%p'`, `find flag "-fprintf" is not allowed`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = validate(f)
+			if err == nil {
+				t.Fatal("expected validation error for blocked find flag")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}
+
+func TestValidate_AllowedFindFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"find -name", "find . -name '*.go'"},
+		{"find -type f -print", "find . -type f -print"},
+		{"find -maxdepth -ls", "find . -maxdepth 2 -ls"},
+		{"find -iname", "find . -iname '*.TXT'"},
+		{"find -size", "find . -size +1M"},
+		{"find -mtime", "find . -mtime -7"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := validate(f); err != nil {
+				t.Fatalf("expected command to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestExtractPathFromFlag(t *testing.T) {
 	tests := []struct {
 		flag     string
