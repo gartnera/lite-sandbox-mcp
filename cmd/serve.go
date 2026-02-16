@@ -9,7 +9,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 
-	"github.com/gartnera/lite-sandbox-mcp/tool"
+	bash_sandboxed "github.com/gartnera/lite-sandbox-mcp/tool/bash_sandboxed"
 )
 
 var serveCmd = &cobra.Command{
@@ -61,7 +61,7 @@ func handleBashSandboxed(ctx context.Context, request mcp.CallToolRequest) (*mcp
 		return mcp.NewToolResultError("failed to get working directory: " + err.Error()), nil
 	}
 
-	output, err := tool.BashSandboxed(ctx, command, cwd, []string{cwd})
+	output, err := bash_sandboxed.BashSandboxed(ctx, command, cwd, []string{cwd})
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
