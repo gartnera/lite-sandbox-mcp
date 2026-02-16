@@ -89,7 +89,11 @@ type Config struct {
 }
 
 // Path returns the platform-appropriate config file path.
+// If LITE_SANDBOX_CONFIG env var is set, that path is used directly.
 func Path() (string, error) {
+	if p := os.Getenv("LITE_SANDBOX_CONFIG"); p != "" {
+		return p, nil
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("unable to determine config directory: %w", err)
