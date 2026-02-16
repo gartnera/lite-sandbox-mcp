@@ -199,6 +199,11 @@ func TestValidatePaths_Blocked(t *testing.T) {
 		{"short flag embedded path", "grep -f/etc/passwd pattern", "outside allowed directories"},
 		{"long flag embedded path", "grep --file=/etc/passwd pattern", "outside allowed directories"},
 		{"short flag dot dot", "grep -f../../etc/passwd pattern", "outside allowed directories"},
+		{"cd outside absolute", "cd /tmp", "outside allowed directories"},
+		{"cd outside traversal", "cd ../../", "outside allowed directories"},
+		{"mkdir outside absolute", "mkdir /tmp/evil", "outside allowed directories"},
+		{"mkdir outside traversal", "mkdir ../evil", "outside allowed directories"},
+		{"mkdir -p outside", "mkdir -p /tmp/a/b/c", "outside allowed directories"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -44,6 +44,10 @@ var allowedCommands = map[string]bool{
 	"whereis": true,
 	"type":    true,
 
+	// Navigation / directory management
+	"cd":    true,
+	"mkdir": true,
+
 	// File info (read-only, no modification capability)
 	"ls":        true,
 	"stat":      true,
