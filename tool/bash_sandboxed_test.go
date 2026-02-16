@@ -260,17 +260,53 @@ func TestValidate_BlockedCommands(t *testing.T) {
 	}
 }
 
-func TestValidate_BlockedRedirections(t *testing.T) {
+func TestValidate_AllowedRedirections(t *testing.T) {
 	tests := []struct {
 		name    string
 		command string
 	}{
-		{"output redirect", "echo hello > file.txt"},
-		{"append redirect", "echo hello >> file.txt"},
-		{"input redirect", "cat < file.txt"},
 		{"heredoc", "cat <<EOF\nhello\nEOF"},
-		{"fd redirect", "echo hello 2>&1"},
-		{"output in pipe", "echo hello | grep hello > file.txt"},
+		{"heredoc dash", "cat <<-EOF\n\thello\nEOF"},
+		{"herestring", "cat <<< 'hello'"},
+		{"fd dup stderr to stdout", "echo hello 2>&1"},
+		{"fd dup close", "echo hello 2>&-"},
+		{"output to /dev/null", "echo hello > /dev/null"},
+		{"append to /dev/null", "echo hello >> /dev/null"},
+		{"clobber to /dev/null", "echo hello >| /dev/null"},
+		{"all to /dev/null", "echo hello &> /dev/null"},
+		{"append all to /dev/null", "echo hello &>> /dev/null"},
+		{"stderr to /dev/null", "echo hello 2> /dev/null"},
+		{"input redirect", "cat < file.txt"},
+		{"input fd dup", "cat 0<&3"},
+		{"combined stderr and devnull", "echo hello 2>&1 > /dev/null"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := validate(f); err != nil {
+				t.Fatalf("expected redirection to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidate_BlockedRedirections(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"output redirect to file", "echo hello > file.txt", "output redirection"},
+		{"append redirect to file", "echo hello >> file.txt", "output redirection"},
+		{"output in pipe to file", "echo hello | grep hello > file.txt", "output redirection"},
+		{"clobber to file", "echo hello >| file.txt", "output redirection"},
+		{"all to file", "echo hello &> file.txt", "output redirection"},
+		{"append all to file", "echo hello &>> file.txt", "output redirection"},
+		{"read-write redirect", "echo hello <> file.txt", "read-write redirection"},
+		{"fd dup to filename", "echo hello >& file.txt", "output fd duplication"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -282,10 +318,107 @@ func TestValidate_BlockedRedirections(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected validation error for redirection")
 			}
-			if !strings.Contains(err.Error(), "redirect") {
-				t.Fatalf("expected redirect error, got %q", err.Error())
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
 			}
 		})
+	}
+}
+
+func TestValidateRedirectPaths_Allowed(t *testing.T) {
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "input.txt"), []byte("hello"), 0o644)
+
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"input redirect from local file", "cat < input.txt"},
+		{"input redirect absolute allowed", "cat < " + workDir + "/input.txt"},
+		{"heredoc no path", "cat <<EOF\nhello\nEOF"},
+		{"output to /dev/null", "echo hello > /dev/null"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := validateRedirectPaths(f, workDir, []string{workDir}); err != nil {
+				t.Fatalf("expected redirect path to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateRedirectPaths_Blocked(t *testing.T) {
+	workDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"input redirect outside", "cat < /etc/passwd", "outside allowed directories"},
+		{"input redirect traversal", "cat < ../../../etc/passwd", "outside allowed directories"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = validateRedirectPaths(f, workDir, []string{workDir})
+			if err == nil {
+				t.Fatal("expected redirect path validation error")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}
+
+func TestBashSandboxed_RedirectAllowed(t *testing.T) {
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "input.txt"), []byte("hello\n"), 0o644)
+
+	// Input redirect from file in allowed dir
+	out, err := BashSandboxed(context.Background(), "cat < "+workDir+"/input.txt", workDir, []string{workDir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "hello\n" {
+		t.Fatalf("expected 'hello\\n', got %q", out)
+	}
+
+	// Heredoc
+	out, err = BashSandboxed(context.Background(), "cat <<EOF\nworld\nEOF", workDir, []string{workDir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "world\n" {
+		t.Fatalf("expected 'world\\n', got %q", out)
+	}
+
+	// /dev/null output
+	out, err = BashSandboxed(context.Background(), "echo hello > /dev/null", workDir, []string{workDir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "" {
+		t.Fatalf("expected empty output, got %q", out)
+	}
+}
+
+func TestBashSandboxed_RedirectPathBlocked(t *testing.T) {
+	workDir := t.TempDir()
+	_, err := BashSandboxed(context.Background(), "cat < /etc/passwd", workDir, []string{workDir})
+	if err == nil {
+		t.Fatal("expected error for redirect path outside allowed dirs")
+	}
+	if !strings.Contains(err.Error(), "outside allowed directories") {
+		t.Fatalf("expected outside allowed directories error, got %q", err.Error())
 	}
 }
 

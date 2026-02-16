@@ -198,9 +198,61 @@ func validateFindArgs(args []*syntax.Word) error {
 	return nil
 }
 
+// validateRedirect checks whether a single redirection is safe.
+// Safe redirections:
+//   - Heredocs and herestrings (<<, <<-, <<<) — input only
+//   - Input fd duplication (<&) — e.g., 0<&3
+//   - Output fd duplication (>&) — only when target is a literal fd number (e.g., 2>&1)
+//   - Input redirect (<) — allowed (path validation happens separately in validatePaths)
+//   - Output redirects (>, >>, >|, &>, &>>) — only to /dev/null
+//   - Read-write redirect (<>) — always blocked
+func validateRedirect(r *syntax.Redirect) error {
+	switch r.Op {
+	case syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc:
+		// Heredocs/herestrings are input-only, always safe.
+		return nil
+	case syntax.DplIn:
+		// Input fd duplication (e.g., 0<&3) is always safe.
+		return nil
+	case syntax.DplOut:
+		// Output fd duplication (e.g., 2>&1) is safe only when the target
+		// is a literal file descriptor number or "-" (to close).
+		word := r.Word.Lit()
+		if word == "" {
+			return fmt.Errorf("redirections with dynamic targets are not allowed")
+		}
+		// Must be a number (fd) or "-" (close fd).
+		for _, c := range word {
+			if c >= '0' && c <= '9' {
+				continue
+			}
+			if c == '-' {
+				continue
+			}
+			return fmt.Errorf("output fd duplication (>&) to %q is not allowed: target must be a file descriptor number", word)
+		}
+		return nil
+	case syntax.RdrIn:
+		// Input redirect (<) from a file — allowed here; path validation
+		// is handled separately by validatePaths via validateRedirectPaths.
+		return nil
+	case syntax.RdrOut, syntax.AppOut, syntax.ClbOut, syntax.RdrAll, syntax.AppAll:
+		// Output redirects are only allowed to /dev/null.
+		word := r.Word.Lit()
+		if word == "/dev/null" {
+			return nil
+		}
+		return fmt.Errorf("output redirection to %q is not allowed (only /dev/null is permitted)", word)
+	case syntax.RdrInOut:
+		return fmt.Errorf("read-write redirection (<>) is not allowed")
+	default:
+		return fmt.Errorf("redirection operator %v is not allowed", r.Op)
+	}
+}
+
 // validate walks the parsed AST and enforces:
 // 1. All commands must be in the allowedCommands whitelist
-// 2. No redirections (>, >>, <, etc.) are permitted
+// 2. Redirections must pass validateRedirect (safe subset only)
 // 3. No process substitutions are permitted
 // 4. Per-command argument validators (e.g., blocking find -exec)
 func validate(f *syntax.File) error {
@@ -211,9 +263,11 @@ func validate(f *syntax.File) error {
 		}
 		switch n := node.(type) {
 		case *syntax.Stmt:
-			if len(n.Redirs) > 0 {
-				validationErr = fmt.Errorf("redirections are not allowed")
-				return false
+			for _, r := range n.Redirs {
+				if err := validateRedirect(r); err != nil {
+					validationErr = err
+					return false
+				}
 			}
 		case *syntax.CallExpr:
 			if len(n.Args) > 0 {
@@ -285,6 +339,43 @@ func validatePaths(f *syntax.File, workDir string, allowedPaths []string) error 
 			resolved := resolvePath(pathToCheck, workDir)
 			if !isUnderAllowedPaths(resolved, allowedPaths) {
 				validationErr = fmt.Errorf("path %q resolves to %q which is outside allowed directories", lit, resolved)
+				return false
+			}
+		}
+		return true
+	})
+	return validationErr
+}
+
+// validateRedirectPaths checks that file targets in redirections resolve to
+// locations under the allowed directories. This covers input redirects (<)
+// which are permitted by validateRedirect but must still respect path boundaries.
+func validateRedirectPaths(f *syntax.File, workDir string, allowedPaths []string) error {
+	var validationErr error
+	syntax.Walk(f, func(node syntax.Node) bool {
+		if validationErr != nil {
+			return false
+		}
+		stmt, ok := node.(*syntax.Stmt)
+		if !ok {
+			return true
+		}
+		for _, r := range stmt.Redirs {
+			// Only check redirects that reference file paths.
+			// fd dups (DplIn, DplOut) and heredocs don't have file targets.
+			switch r.Op {
+			case syntax.RdrIn, syntax.RdrInOut:
+				// These take a file path as target.
+			default:
+				continue
+			}
+			lit := r.Word.Lit()
+			if lit == "" || !looksLikePath(lit) {
+				continue
+			}
+			resolved := resolvePath(lit, workDir)
+			if !isUnderAllowedPaths(resolved, allowedPaths) {
+				validationErr = fmt.Errorf("redirect path %q resolves to %q which is outside allowed directories", lit, resolved)
 				return false
 			}
 		}
@@ -398,6 +489,10 @@ func BashSandboxed(ctx context.Context, command string, workDir string, allowedP
 	}
 
 	if err := validatePaths(f, workDir, allowedPaths); err != nil {
+		return "", fmt.Errorf("validation failed: %w", err)
+	}
+
+	if err := validateRedirectPaths(f, workDir, allowedPaths); err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 
