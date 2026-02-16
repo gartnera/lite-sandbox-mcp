@@ -169,14 +169,8 @@ func TestValidate_BlockedCommands(t *testing.T) {
 		command string
 		errMsg  string
 	}{
-		{"rm", "rm file.txt", `command "rm" is not allowed`},
-		{"rm -rf", "rm -rf /", `command "rm" is not allowed`},
-		{"mv", "mv a b", `command "mv" is not allowed`},
-		{"cp", "cp a b", `command "cp" is not allowed`},
-		{"chmod", "chmod 777 file", `command "chmod" is not allowed`},
 		{"chown", "chown root file", `command "chown" is not allowed`},
 		{"rmdir", "rmdir dir", `command "rmdir" is not allowed`},
-		{"touch", "touch file", `command "touch" is not allowed`},
 		{"dd", "dd if=/dev/zero of=file", `command "dd" is not allowed`},
 		{"mkfs", "mkfs /dev/sda", `command "mkfs" is not allowed`},
 		{"mount", "mount /dev/sda /mnt", `command "mount" is not allowed`},
@@ -193,7 +187,6 @@ func TestValidate_BlockedCommands(t *testing.T) {
 		{"sudo", "sudo echo hi", `command "sudo" is not allowed`},
 		{"iptables", "iptables -F", `command "iptables" is not allowed`},
 		{"crontab", "crontab -l", `command "crontab" is not allowed`},
-		{"ln", "ln -s a b", `command "ln" is not allowed`},
 
 		// Code execution (trivial sandbox bypass)
 		{"python", "python -c 'import os; os.system(\"rm -rf /\")'", `command "python" is not allowed`},
@@ -247,7 +240,6 @@ func TestValidate_BlockedCommands(t *testing.T) {
 		{"xargs", "echo hello | xargs rm", `command "xargs" is not allowed`},
 
 		// Text processing with write capability
-		{"sed", "sed -i 's/a/b/' file", `command "sed" is not allowed`},
 		{"awk", "awk '{print}' file", `command "awk" is not allowed`},
 		{"tee", "echo hello | tee file", `command "tee" is not allowed`},
 		{"csplit", "csplit file /pattern/", `command "csplit" is not allowed`},
@@ -296,7 +288,7 @@ func TestValidate_BlockedProcSubst(t *testing.T) {
 }
 
 func TestValidate_BlockedInPipeline(t *testing.T) {
-	f, err := ParseBash("echo hello | rm file.txt")
+	f, err := ParseBash("echo hello | python script.py")
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
@@ -304,13 +296,13 @@ func TestValidate_BlockedInPipeline(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error for blocked command in pipeline")
 	}
-	if !strings.Contains(err.Error(), `"rm"`) {
-		t.Fatalf("expected rm error, got %q", err.Error())
+	if !strings.Contains(err.Error(), `"python"`) {
+		t.Fatalf("expected python error, got %q", err.Error())
 	}
 }
 
 func TestValidate_BlockedInSubshell(t *testing.T) {
-	f, err := ParseBash("(rm file.txt)")
+	f, err := ParseBash("(python script.py)")
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
@@ -321,7 +313,7 @@ func TestValidate_BlockedInSubshell(t *testing.T) {
 }
 
 func TestValidate_BlockedInIfBody(t *testing.T) {
-	f, err := ParseBash("if true; then rm file.txt; fi")
+	f, err := ParseBash("if true; then python script.py; fi")
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
@@ -332,7 +324,7 @@ func TestValidate_BlockedInIfBody(t *testing.T) {
 }
 
 func TestValidate_BlockedInForLoop(t *testing.T) {
-	f, err := ParseBash("for i in 1 2 3; do rm $i; done")
+	f, err := ParseBash("for i in 1 2 3; do python $i; done")
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
@@ -343,7 +335,7 @@ func TestValidate_BlockedInForLoop(t *testing.T) {
 }
 
 func TestValidate_BlockedInCommandSubstitution(t *testing.T) {
-	f, err := ParseBash("echo $(rm file.txt)")
+	f, err := ParseBash("echo $(python script.py)")
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}

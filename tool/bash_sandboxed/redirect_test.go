@@ -38,18 +38,39 @@ func TestValidate_AllowedRedirections(t *testing.T) {
 	}
 }
 
+func TestValidate_AllowedOutputRedirections(t *testing.T) {
+	// Output redirects to files are now allowed by validate() — path checking
+	// is done separately by validateRedirectPaths.
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"output redirect to file", "echo hello > file.txt"},
+		{"append redirect to file", "echo hello >> file.txt"},
+		{"output in pipe to file", "echo hello | grep hello > file.txt"},
+		{"clobber to file", "echo hello >| file.txt"},
+		{"all to file", "echo hello &> file.txt"},
+		{"append all to file", "echo hello &>> file.txt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := validate(f); err != nil {
+				t.Fatalf("expected redirection to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidate_BlockedRedirections(t *testing.T) {
 	tests := []struct {
 		name    string
 		command string
 		errMsg  string
 	}{
-		{"output redirect to file", "echo hello > file.txt", "output redirection"},
-		{"append redirect to file", "echo hello >> file.txt", "output redirection"},
-		{"output in pipe to file", "echo hello | grep hello > file.txt", "output redirection"},
-		{"clobber to file", "echo hello >| file.txt", "output redirection"},
-		{"all to file", "echo hello &> file.txt", "output redirection"},
-		{"append all to file", "echo hello &>> file.txt", "output redirection"},
 		{"read-write redirect", "echo hello <> file.txt", "read-write redirection"},
 		{"fd dup to filename", "echo hello >& file.txt", "output fd duplication"},
 	}

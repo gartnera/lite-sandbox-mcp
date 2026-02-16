@@ -137,6 +137,15 @@ var allowedCommands = map[string]bool{
 	// Version control (read-only, with arg validator for git)
 	"git": true,
 
+	// Scoped write commands (path-validated to stay within allowedPaths)
+	"cp":    true,
+	"mv":    true,
+	"rm":    true,
+	"touch": true,
+	"chmod": true,
+	"ln":    true,
+	"sed":   true,
+
 	// Control flow / job control
 	"sleep":    true,
 	"wait":     true,
@@ -168,4 +177,6 @@ var commandArgValidators = map[string]func(args []*syntax.Word) error{
 	"unzip": validateUnzipArgs,
 	"ar":    validateArArgs,
 	"git":   validateGitArgs,
+	"rm":    validateRmArgs,
+	"sed":   validateSedArgs,
 }

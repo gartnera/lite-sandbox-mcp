@@ -60,8 +60,9 @@ func validatePaths(f *syntax.File, workDir string, allowedPaths []string) error 
 }
 
 // validateRedirectPaths checks that file targets in redirections resolve to
-// locations under the allowed directories. This covers input redirects (<)
-// which are permitted by validateRedirect but must still respect path boundaries.
+// locations under the allowed directories. This covers both input redirects (<)
+// and output redirects (>, >>, etc.) which must respect path boundaries.
+// Output redirects to /dev/null are always allowed.
 func validateRedirectPaths(f *syntax.File, workDir string, allowedPaths []string) error {
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
@@ -76,18 +77,31 @@ func validateRedirectPaths(f *syntax.File, workDir string, allowedPaths []string
 			// Only check redirects that reference file paths.
 			// fd dups (DplIn, DplOut) and heredocs don't have file targets.
 			switch r.Op {
-			case syntax.RdrIn, syntax.RdrInOut:
+			case syntax.RdrIn, syntax.RdrInOut,
+				syntax.RdrOut, syntax.AppOut, syntax.ClbOut,
+				syntax.RdrAll, syntax.AppAll:
 				// These take a file path as target.
 			default:
 				continue
 			}
 			lit := r.Word.Lit()
-			if lit == "" || !looksLikePath(lit) {
+			if lit == "" {
 				continue
 			}
+			// /dev/null is always allowed for output
+			if lit == "/dev/null" {
+				continue
+			}
+			// For output redirects, all targets must be path-validated.
+			// For relative paths that don't look like paths (e.g., "file.txt"),
+			// resolve them against workDir.
 			resolved := resolvePath(lit, workDir)
 			if !isUnderAllowedPaths(resolved, allowedPaths) {
 				validationErr = fmt.Errorf("redirect path %q resolves to %q which is outside allowed directories", lit, resolved)
+				return false
+			}
+			if isGitInternalPath(resolved) {
+				validationErr = fmt.Errorf("redirect path %q accesses .git directory which is not allowed", lit)
 				return false
 			}
 		}

@@ -45,12 +45,13 @@ func validateRedirect(r *syntax.Redirect) error {
 		// is handled separately by validatePaths via validateRedirectPaths.
 		return nil
 	case syntax.RdrOut, syntax.AppOut, syntax.ClbOut, syntax.RdrAll, syntax.AppAll:
-		// Output redirects are only allowed to /dev/null.
+		// Output redirects are allowed to /dev/null and to paths within allowedPaths.
+		// Path validation is handled by validateRedirectPaths.
 		word := r.Word.Lit()
-		if word == "/dev/null" {
-			return nil
+		if word == "" {
+			return fmt.Errorf("output redirection with dynamic target is not allowed")
 		}
-		return fmt.Errorf("output redirection to %q is not allowed (only /dev/null is permitted)", word)
+		return nil
 	case syntax.RdrInOut:
 		return fmt.Errorf("read-write redirection (<>) is not allowed")
 	default:

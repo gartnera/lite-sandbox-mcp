@@ -20,6 +20,12 @@ func TestValidateRedirectPaths_Allowed(t *testing.T) {
 		{"input redirect absolute allowed", "cat < " + workDir + "/input.txt"},
 		{"heredoc no path", "cat <<EOF\nhello\nEOF"},
 		{"output to /dev/null", "echo hello > /dev/null"},
+		{"output redirect to local file", "echo hello > output.txt"},
+		{"append redirect to local file", "echo hello >> output.txt"},
+		{"output redirect absolute allowed", "echo hello > " + workDir + "/output.txt"},
+		{"clobber to local file", "echo hello >| output.txt"},
+		{"all to local file", "echo hello &> output.txt"},
+		{"append all to local file", "echo hello &>> output.txt"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,6 +50,11 @@ func TestValidateRedirectPaths_Blocked(t *testing.T) {
 	}{
 		{"input redirect outside", "cat < /etc/passwd", "outside allowed directories"},
 		{"input redirect traversal", "cat < ../../../etc/passwd", "outside allowed directories"},
+		{"output redirect outside", "echo hello > /etc/evil", "outside allowed directories"},
+		{"append redirect outside", "echo hello >> /tmp/evil", "outside allowed directories"},
+		{"output redirect traversal", "echo hello > ../../../tmp/evil", "outside allowed directories"},
+		{"all redirect outside", "echo hello &> /tmp/evil", "outside allowed directories"},
+		{"output redirect to .git", "echo hello > .git/config", "accesses .git directory"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -91,6 +102,26 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	}
 	if out != "" {
 		t.Fatalf("expected empty output, got %q", out)
+	}
+
+	// Output redirect to file in allowed dir
+	_, err = BashSandboxed(context.Background(), "echo hello > "+workDir+"/output.txt", workDir, []string{workDir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content, _ := os.ReadFile(filepath.Join(workDir, "output.txt"))
+	if string(content) != "hello\n" {
+		t.Fatalf("expected 'hello\\n' in output.txt, got %q", string(content))
+	}
+
+	// Append redirect to file in allowed dir
+	_, err = BashSandboxed(context.Background(), "echo world >> "+workDir+"/output.txt", workDir, []string{workDir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content, _ = os.ReadFile(filepath.Join(workDir, "output.txt"))
+	if string(content) != "hello\nworld\n" {
+		t.Fatalf("expected 'hello\\nworld\\n' in output.txt, got %q", string(content))
 	}
 }
 
@@ -204,6 +235,18 @@ func TestValidatePaths_Blocked(t *testing.T) {
 		{"mkdir outside absolute", "mkdir /tmp/evil", "outside allowed directories"},
 		{"mkdir outside traversal", "mkdir ../evil", "outside allowed directories"},
 		{"mkdir -p outside", "mkdir -p /tmp/a/b/c", "outside allowed directories"},
+		// Write commands blocked outside allowedPaths
+		{"cp outside dest", "cp file.txt /tmp/evil", "outside allowed directories"},
+		{"cp outside src", "cp /etc/passwd file.txt", "outside allowed directories"},
+		{"mv outside dest", "mv file.txt /tmp/evil", "outside allowed directories"},
+		{"mv outside src", "mv /etc/passwd file.txt", "outside allowed directories"},
+		{"rm outside", "rm /etc/passwd", "outside allowed directories"},
+		{"rm -rf outside", "rm -rf /tmp/evil", "outside allowed directories"},
+		{"touch outside", "touch /tmp/evil", "outside allowed directories"},
+		{"chmod outside", "chmod 777 /etc/passwd", "outside allowed directories"},
+		{"ln outside target", "ln -s /etc/passwd link", "outside allowed directories"},
+		{"ln outside link", "ln -s target /tmp/link", "outside allowed directories"},
+		{"sed outside", "sed -i 's/a/b/' /etc/passwd", "outside allowed directories"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
