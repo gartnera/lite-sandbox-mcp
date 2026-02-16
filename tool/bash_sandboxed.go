@@ -22,58 +22,64 @@ func ParseBash(command string) (*syntax.File, error) {
 }
 
 // allowedCommands is the whitelist of commands that are permitted to execute.
-// Only non-destructive commands are included. When in doubt, commands are excluded.
+// Only non-destructive, non-code-execution commands are included.
+// Excluded categories:
+//   - Code execution: python, node, ruby, perl, go, java, gcc, etc. (trivial sandbox bypass)
+//   - Networking: curl, wget, ping, nmap, etc. (data exfiltration / remote code fetch)
+//   - Archive write: tar, unzip, gzip, etc. (arbitrary file writes to sensitive locations)
+//   - Shell escape: eval, exec, source, xargs (bypass command whitelist)
+//   - Version control: git, gh (can execute hooks, fetch remote code)
+//   - Package managers: npm, pip, cargo, etc. (arbitrary code execution via install scripts)
+//
+// When in doubt, commands are excluded.
 var allowedCommands = map[string]bool{
-	// Output / display
-	"echo":    true,
-	"printf":  true,
-	"cat":     true,
-	"head":    true,
-	"tail":    true,
-	"less":    true,
-	"more":    true,
-	"wc":      true,
-	"tee":     true,
-	"column":  true,
-	"fold":    true,
-	"paste":   true,
-	"rev":     true,
-	"tac":     true,
-	"nl":      true,
-	"pr":      true,
-	"expand":  true,
+	// Output / display (pure readers, no write capability)
+	"echo":     true,
+	"printf":   true,
+	"cat":      true,
+	"head":     true,
+	"tail":     true,
+	"less":     true,
+	"more":     true,
+	"wc":       true,
+	"column":   true,
+	"fold":     true,
+	"paste":    true,
+	"rev":      true,
+	"tac":      true,
+	"nl":       true,
+	"pr":       true,
+	"expand":   true,
 	"unexpand": true,
 
-	// Search / find
-	"grep":  true,
-	"egrep": true,
-	"fgrep": true,
-	"find":  true,
-	"locate": true,
-	"which": true,
+	// Search / find (read-only)
+	"grep":    true,
+	"egrep":   true,
+	"fgrep":   true,
+	"find":    true,
+	"locate":  true,
+	"which":   true,
 	"whereis": true,
-	"type":  true,
+	"type":    true,
 
-	// File info (read-only)
-	"ls":     true,
-	"stat":   true,
-	"file":   true,
-	"du":     true,
-	"df":     true,
-	"readlink": true,
-	"realpath": true,
-	"basename": true,
-	"dirname":  true,
-	"pwd":      true,
+	// File info (read-only, no modification capability)
+	"ls":        true,
+	"stat":      true,
+	"file":      true,
+	"du":        true,
+	"df":        true,
+	"readlink":  true,
+	"realpath":  true,
+	"basename":  true,
+	"dirname":   true,
+	"pwd":       true,
 	"sha256sum": true,
 	"sha1sum":   true,
 	"md5sum":    true,
 	"cksum":     true,
 	"b2sum":     true,
 
-	// Text processing
-	"awk":     true,
-	"sed":     true,
+	// Text processing (stdin/stdout only, no file write capability)
 	"sort":    true,
 	"uniq":    true,
 	"cut":     true,
@@ -81,38 +87,35 @@ var allowedCommands = map[string]bool{
 	"diff":    true,
 	"comm":    true,
 	"join":    true,
-	"csplit":  true,
 	"strings": true,
 	"od":      true,
 	"hexdump": true,
 	"xxd":     true,
 
-	// JSON/structured data
+	// JSON/structured data (stdin/stdout processors)
 	"jq": true,
 	"yq": true,
 
-	// Variables / shell builtins (non-destructive)
-	"test":    true,
-	"[":      true,
-	"true":   true,
-	"false":  true,
-	"read":   true,
-	"set":    true,
-	"unset":  true,
-	"export": true,
-	"local":  true,
-	"declare": true,
-	"typeset": true,
+	// Shell builtins (non-destructive, no escape capability)
+	"test":     true,
+	"[":        true,
+	"true":     true,
+	"false":    true,
+	"read":     true,
+	"set":      true,
+	"unset":    true,
+	"export":   true,
+	"local":    true,
+	"declare":  true,
+	"typeset":  true,
 	"readonly": true,
-	"shift":   true,
-	"getopts": true,
-	"let":     true,
-	"expr":    true,
+	"shift":    true,
+	"getopts":  true,
+	"let":      true,
+	"expr":     true,
 
 	// Process / system info (read-only)
 	"ps":       true,
-	"top":      true,
-	"htop":     true,
 	"uptime":   true,
 	"uname":    true,
 	"hostname": true,
@@ -124,79 +127,33 @@ var allowedCommands = map[string]bool{
 	"date":     true,
 	"cal":      true,
 
-	// Math / calculation
-	"bc":   true,
-	"dc":   true,
-	"seq":  true,
+	// Math / calculation (pure computation)
+	"bc":     true,
+	"dc":     true,
+	"seq":    true,
 	"factor": true,
 	"numfmt": true,
 
-	// Networking (read-only)
-	"ping":       true,
-	"dig":        true,
-	"nslookup":   true,
-	"host":       true,
-	"curl":       true,
-	"wget":       true,
-	"ip":         true,
-	"ifconfig":   true,
-	"netstat":    true,
-	"ss":         true,
-	"traceroute": true,
-	"nmap":       true,
+	// Compressed file readers (read-only, no extraction)
+	"zcat":  true,
+	"zless": true,
+	"zgrep": true,
+	"bzcat": true,
+	"xzcat": true,
 
-	// Archive inspection (read-only operations)
-	"tar":    true,
-	"unzip":  true,
-	"zcat":   true,
-	"zless":  true,
-	"zgrep":  true,
-	"bzcat":  true,
-	"xzcat":  true,
-	"gzip":   true,
-	"gunzip": true,
-
-	// Version control (read-only)
-	"git": true,
-	"gh":  true,
-	"svn": true,
-
-	// Programming tools (read-only / analysis)
-	"python":  true,
-	"python3": true,
-	"node":    true,
-	"ruby":    true,
-	"perl":    true,
-	"go":      true,
-	"rustc":   true,
-	"gcc":     true,
-	"g++":     true,
-	"make":    true,
-	"cargo":   true,
-	"npm":     true,
-	"npx":     true,
-	"yarn":    true,
-	"pip":     true,
-	"pip3":    true,
-	"java":    true,
-	"javac":   true,
-
-	// Misc utilities
-	"xargs":  true,
-	"yes":    true,
-	"timeout": true,
-	"time":   true,
-	"sleep":  true,
-	"wait":   true,
-	"trap":   true,
-	"return": true,
-	"exit":   true,
-	"break":  true,
+	// Control flow / job control
+	"sleep":    true,
+	"wait":     true,
+	"trap":     true,
+	"return":   true,
+	"exit":     true,
+	"break":    true,
 	"continue": true,
-	"source": true,
-	".":      true,
-	"eval":   true,
-	"exec":   true,
+	"timeout":  true,
+	"time":     true,
+	"yes":      true,
+
+	// Safe introspection
 	"command": true,
 	"builtin": true,
 	"hash":    true,
