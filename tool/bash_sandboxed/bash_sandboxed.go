@@ -16,8 +16,9 @@ import (
 // Sandbox executes bash commands after parsing and validating them against
 // the built-in allowlist plus any extra commands from config.
 type Sandbox struct {
-	mu              sync.RWMutex
-	extraCommands   map[string]bool
+	mu            sync.RWMutex
+	extraCommands map[string]bool
+	gitConfig     *config.GitConfig
 }
 
 // NewSandbox creates a Sandbox with no extra commands.
@@ -33,6 +34,7 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config) {
 	}
 	s.mu.Lock()
 	s.extraCommands = m
+	s.gitConfig = cfg.Git
 	s.mu.Unlock()
 }
 
@@ -41,6 +43,13 @@ func (s *Sandbox) getExtraCommands() map[string]bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.extraCommands
+}
+
+// getGitConfig returns a snapshot of the current git config.
+func (s *Sandbox) getGitConfig() *config.GitConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.gitConfig
 }
 
 // ParseBash parses a command string as bash and returns the AST.
@@ -60,6 +69,7 @@ func ParseBash(command string) (*syntax.File, error) {
 // 4. Per-command argument validators (e.g., blocking find -exec)
 func (s *Sandbox) validate(f *syntax.File) error {
 	extra := s.getExtraCommands()
+	gitCfg := s.getGitConfig()
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
 		if validationErr != nil {
@@ -84,7 +94,12 @@ func (s *Sandbox) validate(f *syntax.File) error {
 					validationErr = fmt.Errorf("command %q is not allowed", cmdName)
 					return false
 				}
-				if validator, ok := commandArgValidators[cmdName]; ok {
+				if cmdName == "git" {
+					if err := validateGitArgs(n.Args, gitCfg); err != nil {
+						validationErr = err
+						return false
+					}
+				} else if validator, ok := commandArgValidators[cmdName]; ok {
 					if err := validator(n.Args); err != nil {
 						validationErr = err
 						return false

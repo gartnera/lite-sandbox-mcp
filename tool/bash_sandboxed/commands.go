@@ -176,7 +176,6 @@ var commandArgValidators = map[string]func(args []*syntax.Word) error{
 	"tar":   validateTarArgs,
 	"unzip": validateUnzipArgs,
 	"ar":    validateArArgs,
-	"git":   validateGitArgs,
 	"rm":    validateRmArgs,
 	"sed":   validateSedArgs,
 }

@@ -13,10 +13,51 @@ import (
 
 const appName = "lite-sandbox-mcp"
 
+// GitConfig controls granular git permission levels.
+type GitConfig struct {
+	LocalRead   *bool `yaml:"local_read,omitempty"`
+	LocalWrite  *bool `yaml:"local_write,omitempty"`
+	RemoteRead  *bool `yaml:"remote_read,omitempty"`
+	RemoteWrite *bool `yaml:"remote_write,omitempty"`
+}
+
+// GitLocalRead returns whether local read git operations are allowed (default: true).
+func (g *GitConfig) GitLocalRead() bool {
+	if g == nil || g.LocalRead == nil {
+		return true
+	}
+	return *g.LocalRead
+}
+
+// GitLocalWrite returns whether local write git operations are allowed (default: true).
+func (g *GitConfig) GitLocalWrite() bool {
+	if g == nil || g.LocalWrite == nil {
+		return true
+	}
+	return *g.LocalWrite
+}
+
+// GitRemoteRead returns whether remote read git operations are allowed (default: true).
+func (g *GitConfig) GitRemoteRead() bool {
+	if g == nil || g.RemoteRead == nil {
+		return true
+	}
+	return *g.RemoteRead
+}
+
+// GitRemoteWrite returns whether remote write git operations are allowed (default: false).
+func (g *GitConfig) GitRemoteWrite() bool {
+	if g == nil || g.RemoteWrite == nil {
+		return false
+	}
+	return *g.RemoteWrite
+}
+
 // Config holds all user configuration. New fields can be added over time;
 // unknown YAML fields are silently ignored for forward compatibility.
 type Config struct {
-	ExtraCommands []string `yaml:"extra_commands,omitempty"`
+	ExtraCommands []string   `yaml:"extra_commands,omitempty"`
+	Git           *GitConfig `yaml:"git,omitempty"`
 }
 
 // Path returns the platform-appropriate config file path.
