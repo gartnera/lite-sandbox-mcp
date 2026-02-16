@@ -65,11 +65,38 @@ func ParseBash(command string) (*syntax.File, error) {
 	return f, nil
 }
 
+// blockedEnvVars lists environment variables that cannot be assigned in sandboxed commands.
+// PATH is inherited but cannot be mutated (prevents command whitelist bypass).
+// Others prevent shared library injection, auto-sourced scripts, and unexpected behavior.
+var blockedEnvVars = map[string]string{
+	"PATH":            "mutating PATH could bypass the command whitelist",
+	"LD_PRELOAD":      "shared library injection",
+	"LD_LIBRARY_PATH": "shared library injection",
+	"BASH_ENV":        "auto-sourced script injection",
+	"ENV":             "auto-sourced script injection",
+	"CDPATH":          "unexpected directory resolution",
+	"PROMPT_COMMAND":  "arbitrary command execution",
+}
+
+// validateAssigns checks that none of the assignments target a blocked environment variable.
+func validateAssigns(assigns []*syntax.Assign) error {
+	for _, a := range assigns {
+		if a.Name == nil {
+			continue
+		}
+		if reason, blocked := blockedEnvVars[a.Name.Value]; blocked {
+			return fmt.Errorf("setting %s is not allowed: %s", a.Name.Value, reason)
+		}
+	}
+	return nil
+}
+
 // validate walks the parsed AST and enforces:
 // 1. All commands must be in the allowedCommands whitelist or extra commands
 // 2. Redirections must pass validateRedirect (safe subset only)
 // 3. No process substitutions are permitted
 // 4. Per-command argument validators (e.g., blocking find -exec)
+// 5. Blocked environment variable assignments (PATH, LD_PRELOAD, etc.)
 func (s *Sandbox) validate(f *syntax.File) error {
 	extra := s.getExtraCommands()
 	gitCfg := s.getGitConfig()
@@ -87,6 +114,10 @@ func (s *Sandbox) validate(f *syntax.File) error {
 				}
 			}
 		case *syntax.CallExpr:
+			if err := validateAssigns(n.Assigns); err != nil {
+				validationErr = err
+				return false
+			}
 			if len(n.Args) > 0 {
 				cmdName := extractCommandName(n.Args[0])
 				if cmdName == "" {
@@ -108,6 +139,11 @@ func (s *Sandbox) validate(f *syntax.File) error {
 						return false
 					}
 				}
+			}
+		case *syntax.DeclClause:
+			if err := validateAssigns(n.Args); err != nil {
+				validationErr = err
+				return false
 			}
 		case *syntax.ProcSubst:
 			validationErr = fmt.Errorf("process substitutions are not allowed")

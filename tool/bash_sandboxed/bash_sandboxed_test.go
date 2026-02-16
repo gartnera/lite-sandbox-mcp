@@ -359,6 +359,68 @@ func TestValidate_DynamicCommandBlocked(t *testing.T) {
 	}
 }
 
+func TestValidate_BlockedEnvVars(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		// Bare assignments
+		{"PATH assignment", "PATH=/tmp/evil:$PATH", "setting PATH is not allowed"},
+		{"LD_PRELOAD assignment", "LD_PRELOAD=/tmp/evil.so", "setting LD_PRELOAD is not allowed"},
+		{"LD_LIBRARY_PATH assignment", "LD_LIBRARY_PATH=/tmp/evil", "setting LD_LIBRARY_PATH is not allowed"},
+		{"BASH_ENV assignment", "BASH_ENV=/tmp/evil.sh", "setting BASH_ENV is not allowed"},
+		{"ENV assignment", "ENV=/tmp/evil.sh", "setting ENV is not allowed"},
+		{"CDPATH assignment", "CDPATH=/tmp", "setting CDPATH is not allowed"},
+		{"PROMPT_COMMAND assignment", "PROMPT_COMMAND=evil", "setting PROMPT_COMMAND is not allowed"},
+		// Inline assignments with command
+		{"PATH inline", "PATH=/tmp/evil echo hello", "setting PATH is not allowed"},
+		// export/declare
+		{"export PATH", "export PATH=/tmp/evil", "setting PATH is not allowed"},
+		{"declare PATH", "declare PATH=/tmp/evil", "setting PATH is not allowed"},
+		{"export LD_PRELOAD", "export LD_PRELOAD=/tmp/evil.so", "setting LD_PRELOAD is not allowed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = newTestSandbox().validate(f)
+			if err == nil {
+				t.Fatal("expected validation error for blocked env var")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}
+
+func TestValidate_AllowedEnvVars(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"FOO assignment", "FOO=bar"},
+		{"FOO with command", "FOO=bar echo $FOO"},
+		{"export FOO", "export FOO=bar"},
+		{"declare FOO", "declare -a arr"},
+		{"HOME assignment", "HOME=/tmp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := newTestSandbox().validate(f); err != nil {
+				t.Fatalf("expected command to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidate_ExtraCommands(t *testing.T) {
 	s := NewSandbox()
 
