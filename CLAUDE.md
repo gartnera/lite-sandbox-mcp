@@ -10,6 +10,7 @@ go test ./...                    # Run all tests
 go test -v ./tool/...            # Run tool package tests with verbose output
 go test -run TestValidate ./tool # Run a specific test
 go run . serve                   # Start MCP server over stdio
+cd e2e/claude && uv run pytest -v # Run e2e tests (Claude Agent SDK)
 ```
 
 ## Architecture
@@ -26,6 +27,14 @@ This is an MCP (Model Context Protocol) server that exposes a single `bash_sandb
 **Key packages:**
 - `cmd/` — Cobra CLI setup and MCP server registration
 - `tool/` — Sandbox implementation (parsing, validation, execution)
+
+## Testing
+
+After making complex changes (new commands, validation logic, security rules), run the e2e tests in addition to unit tests. These send real prompts to Claude via the Agent SDK and verify the sandbox tool works end-to-end:
+
+```bash
+cd e2e/claude && uv run pytest -v
+```
 
 ## Notes
 
