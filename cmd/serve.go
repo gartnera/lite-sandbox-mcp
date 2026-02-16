@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"log/slog"
+	"os"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -55,7 +56,12 @@ func handleBashSandboxed(ctx context.Context, request mcp.CallToolRequest) (*mcp
 		return mcp.NewToolResultError("missing required parameter: command"), nil
 	}
 
-	output, err := tool.BashSandboxed(ctx, command)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return mcp.NewToolResultError("failed to get working directory: " + err.Error()), nil
+	}
+
+	output, err := tool.BashSandboxed(ctx, command, cwd, []string{cwd})
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

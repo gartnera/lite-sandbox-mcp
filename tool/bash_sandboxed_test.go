@@ -2,6 +2,8 @@ package tool
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -49,7 +51,8 @@ func TestParseBash_Invalid(t *testing.T) {
 }
 
 func TestBashSandboxed_Executes(t *testing.T) {
-	out, err := BashSandboxed(context.Background(), "echo hello")
+	workDir := t.TempDir()
+	out, err := BashSandboxed(context.Background(), "echo hello", workDir, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,14 +62,16 @@ func TestBashSandboxed_Executes(t *testing.T) {
 }
 
 func TestBashSandboxed_FailingCommand(t *testing.T) {
-	_, err := BashSandboxed(context.Background(), "false")
+	workDir := t.TempDir()
+	_, err := BashSandboxed(context.Background(), "false", workDir, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error for failing command")
 	}
 }
 
 func TestBashSandboxed_InvalidSyntax(t *testing.T) {
-	_, err := BashSandboxed(context.Background(), "echo 'hello")
+	workDir := t.TempDir()
+	_, err := BashSandboxed(context.Background(), "echo 'hello", workDir, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error for invalid syntax")
 	}
@@ -373,5 +378,159 @@ func TestValidate_DynamicCommandBlocked(t *testing.T) {
 	err = validate(f)
 	if err == nil {
 		t.Fatal("expected validation error for dynamic command name")
+	}
+}
+
+func TestValidatePaths_Allowed(t *testing.T) {
+	workDir := t.TempDir()
+
+	// Create a subdirectory and file for testing
+	subDir := filepath.Join(workDir, "subdir")
+	os.MkdirAll(subDir, 0o755)
+	os.WriteFile(filepath.Join(workDir, "file.txt"), []byte("hello"), 0o644)
+	os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("nested"), 0o644)
+
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"simple filename", "cat file.txt"},
+		{"dot path", "ls ."},
+		{"dot slash", "cat ./file.txt"},
+		{"subdirectory", "cat subdir/nested.txt"},
+		{"dot slash subdir", "cat ./subdir/nested.txt"},
+		{"find dot", "find . -name '*.txt'"},
+		{"no path args", "echo hello"},
+		{"flags only", "ls -la"},
+		{"workdir absolute", "cat " + workDir + "/file.txt"},
+		{"non-path args", "echo hello world"},
+		{"grep with pattern", "grep pattern file.txt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := validatePaths(f, workDir, []string{workDir}); err != nil {
+				t.Fatalf("expected path to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidatePaths_Blocked(t *testing.T) {
+	workDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"absolute etc", "cat /etc/passwd", "outside allowed directories"},
+		{"absolute root", "find /", "outside allowed directories"},
+		{"dot dot traversal", "cat ../../../etc/passwd", "outside allowed directories"},
+		{"dot dot simple", "cat ../outside", "outside allowed directories"},
+		{"absolute tmp", "ls /tmp", "outside allowed directories"},
+		{"absolute bin", "strings /bin/ls", "outside allowed directories"},
+		{"stat outside", "stat /etc/hostname", "outside allowed directories"},
+		{"head outside", "head -5 /etc/hostname", "outside allowed directories"},
+		{"du outside", "du -sh /tmp", "outside allowed directories"},
+		{"diff outside", "diff /dev/null /dev/null", "outside allowed directories"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = validatePaths(f, workDir, []string{workDir})
+			if err == nil {
+				t.Fatal("expected path validation error")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}
+
+func TestValidatePaths_SymlinkEscape(t *testing.T) {
+	workDir := t.TempDir()
+
+	// Create a symlink inside workDir that points outside
+	symlink := filepath.Join(workDir, "escape")
+	os.Symlink("/etc", symlink)
+
+	f, err := ParseBash("cat escape/passwd")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	err = validatePaths(f, workDir, []string{workDir})
+	if err == nil {
+		t.Fatal("expected path validation error for symlink escape")
+	}
+	if !strings.Contains(err.Error(), "outside allowed directories") {
+		t.Fatalf("expected outside allowed directories error, got %q", err.Error())
+	}
+}
+
+func TestValidatePaths_MultipleAllowedPaths(t *testing.T) {
+	workDir := t.TempDir()
+	extraDir := t.TempDir()
+
+	os.WriteFile(filepath.Join(extraDir, "allowed.txt"), []byte("ok"), 0o644)
+
+	f, err := ParseBash("cat " + extraDir + "/allowed.txt")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	// Should be blocked with only workDir allowed
+	err = validatePaths(f, workDir, []string{workDir})
+	if err == nil {
+		t.Fatal("expected error when extra dir not in allowed paths")
+	}
+
+	// Should be allowed with both dirs
+	err = validatePaths(f, workDir, []string{workDir, extraDir})
+	if err != nil {
+		t.Fatalf("expected path to be allowed with multiple allowed paths, got: %v", err)
+	}
+}
+
+func TestValidatePaths_InSubshellAndPipeline(t *testing.T) {
+	workDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"subshell", "(cat /etc/passwd)"},
+		{"pipeline", "cat /etc/passwd | grep root"},
+		{"and chain", "true && cat /etc/passwd"},
+		{"command substitution", "echo $(cat /etc/passwd)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = validatePaths(f, workDir, []string{workDir})
+			if err == nil {
+				t.Fatal("expected path validation error")
+			}
+		})
+	}
+}
+
+func TestBashSandboxed_PathBlocked(t *testing.T) {
+	workDir := t.TempDir()
+	_, err := BashSandboxed(context.Background(), "cat /etc/passwd", workDir, []string{workDir})
+	if err == nil {
+		t.Fatal("expected error for path outside allowed dirs")
+	}
+	if !strings.Contains(err.Error(), "outside allowed directories") {
+		t.Fatalf("expected outside allowed directories error, got %q", err.Error())
 	}
 }

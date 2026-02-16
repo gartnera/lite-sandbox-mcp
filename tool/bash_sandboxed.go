@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -209,9 +210,113 @@ func extractCommandName(w *syntax.Word) string {
 	return w.Lit()
 }
 
+// validatePaths checks that all path-like arguments in the AST resolve to
+// locations under the allowed directories. This prevents reading files outside
+// the sandbox boundary (e.g., cat /etc/passwd, cat ../../../etc/shadow).
+func validatePaths(f *syntax.File, workDir string, allowedPaths []string) error {
+	var validationErr error
+	syntax.Walk(f, func(node syntax.Node) bool {
+		if validationErr != nil {
+			return false
+		}
+		callExpr, ok := node.(*syntax.CallExpr)
+		if !ok {
+			return true
+		}
+		for i, arg := range callExpr.Args {
+			if i == 0 {
+				continue // skip command name
+			}
+			lit := arg.Lit()
+			if lit == "" {
+				continue // dynamic/non-literal argument
+			}
+			if strings.HasPrefix(lit, "-") {
+				continue // flag
+			}
+			if !looksLikePath(lit) {
+				continue
+			}
+			resolved := resolvePath(lit, workDir)
+			if !isUnderAllowedPaths(resolved, allowedPaths) {
+				validationErr = fmt.Errorf("path %q resolves to %q which is outside allowed directories", lit, resolved)
+				return false
+			}
+		}
+		return true
+	})
+	return validationErr
+}
+
+// looksLikePath returns true if the string looks like it references a filesystem
+// path rather than a plain argument. We check arguments that are absolute,
+// start with ./ or ../, or contain a path separator.
+func looksLikePath(s string) bool {
+	if filepath.IsAbs(s) {
+		return true
+	}
+	if strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") || s == "." || s == ".." {
+		return true
+	}
+	if strings.Contains(s, "/") {
+		return true
+	}
+	return false
+}
+
+// resolvePath resolves a potentially relative path to an absolute path,
+// handling symlinks for any existing prefix of the path.
+func resolvePath(path, workDir string) string {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(workDir, path)
+	}
+	path = filepath.Clean(path)
+
+	// Try to resolve symlinks on the full path
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved
+	}
+
+	// Path doesn't fully exist; resolve the longest existing prefix
+	return resolveExistingPrefix(path)
+}
+
+// resolveExistingPrefix recursively resolves symlinks on the longest existing
+// ancestor of path, then joins the non-existing suffix back.
+func resolveExistingPrefix(path string) string {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+
+	if dir == path {
+		// Reached root
+		return path
+	}
+
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err == nil {
+		return filepath.Join(resolved, base)
+	}
+
+	return filepath.Join(resolveExistingPrefix(dir), base)
+}
+
+// isUnderAllowedPaths checks whether the resolved path is equal to or nested
+// under one of the allowed directories.
+func isUnderAllowedPaths(path string, allowedPaths []string) bool {
+	for _, allowed := range allowedPaths {
+		if path == allowed || strings.HasPrefix(path, allowed+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 // BashSandboxed parses, validates, and executes a bash command.
+// workDir is the working directory for the command and for resolving relative paths.
+// allowedPaths are absolute directories that the command is permitted to access.
 // It returns the combined stdout and stderr output.
-func BashSandboxed(ctx context.Context, command string) (string, error) {
+func BashSandboxed(ctx context.Context, command string, workDir string, allowedPaths []string) (string, error) {
 	slog.InfoContext(ctx, "executing sandboxed bash", "command", command)
 
 	f, err := ParseBash(command)
@@ -223,7 +328,12 @@ func BashSandboxed(ctx context.Context, command string) (string, error) {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 
+	if err := validatePaths(f, workDir, allowedPaths); err != nil {
+		return "", fmt.Errorf("validation failed: %w", err)
+	}
+
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	cmd.Dir = workDir
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
