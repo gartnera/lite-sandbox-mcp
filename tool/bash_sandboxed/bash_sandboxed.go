@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
-	"os/exec"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/gartnera/lite-sandbox-mcp/config"
+	"mvdan.cc/sh/v3/expand"
+	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -148,12 +151,31 @@ func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, a
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", command)
-	cmd.Dir = workDir
 	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err = cmd.Run()
+	runner, err := interp.New(
+		interp.Dir(workDir),
+		interp.StdIO(nil, &out, &out),
+		interp.Env(expand.ListEnviron(os.Environ()...)),
+		interp.CallHandler(func(ctx context.Context, args []string) ([]string, error) {
+			hc := interp.HandlerCtx(ctx)
+			if err := validateExpandedPaths(args, hc.Dir, allowedPaths); err != nil {
+				return nil, err
+			}
+			return args, nil
+		}),
+		interp.OpenHandler(func(ctx context.Context, path string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
+			hc := interp.HandlerCtx(ctx)
+			if err := validateOpenPath(path, hc.Dir, allowedPaths); err != nil {
+				return nil, err
+			}
+			return interp.DefaultOpenHandler()(ctx, path, flag, perm)
+		}),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create interpreter: %w", err)
+	}
+
+	err = runner.Run(ctx, f)
 	output := out.String()
 	if err != nil {
 		return output, fmt.Errorf("command failed: %w\noutput: %s", err, output)

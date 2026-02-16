@@ -2,6 +2,7 @@ package bash_sandboxed
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -379,5 +380,58 @@ func TestBashSandboxed_PathBlocked(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "outside allowed directories") {
 		t.Fatalf("expected outside allowed directories error, got %q", err.Error())
+	}
+}
+
+func TestBashSandboxed_VariableExpansionPathBlocked(t *testing.T) {
+	workDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"cat HOME var", `cat $HOME/secret`, "outside allowed directories"},
+		{"cat HOME braces", `cat ${HOME}/secret`, "outside allowed directories"},
+		{"cat env var absolute", `HOME=/etc cat $HOME/passwd`, "outside allowed directories"},
+		{"head HOME var", `head $HOME/secret`, "outside allowed directories"},
+		{"redirect input var", `cat < $HOME/secret`, "outside allowed directories"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewSandbox().Execute(context.Background(), tt.command, workDir, []string{workDir})
+			if err == nil {
+				t.Fatal("expected error for variable expansion path outside allowed dirs")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}
+
+func TestBashSandboxed_VariableExpansionAllowed(t *testing.T) {
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "hello.txt"), []byte("hello\n"), 0o644)
+
+	tests := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{"echo var", `FOO=world echo $FOO`, ""},
+		{"echo with expansion", `echo hello`, "hello\n"},
+		{"var in local path", fmt.Sprintf(`DIR=%s; cat $DIR/hello.txt`, workDir), "hello\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := NewSandbox().Execute(context.Background(), tt.command, workDir, []string{workDir})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.want != "" && out != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, out)
+			}
+		})
 	}
 }

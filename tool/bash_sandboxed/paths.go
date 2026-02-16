@@ -211,3 +211,52 @@ func isUnderAllowedPaths(path string, allowedPaths []string) bool {
 	}
 	return false
 }
+
+// validateExpandedPaths checks command arguments after variable expansion.
+// This is called by the interpreter's CallHandler, where all variables and
+// command substitutions have been resolved to their actual values.
+// This catches bypasses like "cat $HOME/secret" that static validation misses.
+func validateExpandedPaths(args []string, workDir string, allowedPaths []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	for _, arg := range args[1:] {
+		if arg == ".git" || strings.HasPrefix(arg, ".git/") || strings.HasPrefix(arg, ".git\\") {
+			return fmt.Errorf("path %q accesses .git directory which is not allowed", arg)
+		}
+		var pathToCheck string
+		if strings.HasPrefix(arg, "-") {
+			pathToCheck = extractPathFromFlag(arg)
+		} else {
+			pathToCheck = arg
+		}
+		if pathToCheck == "" || !looksLikePath(pathToCheck) {
+			continue
+		}
+		resolved := resolvePath(pathToCheck, workDir)
+		if !isUnderAllowedPaths(resolved, allowedPaths) {
+			return fmt.Errorf("path %q resolves to %q which is outside allowed directories", arg, resolved)
+		}
+		if isGitInternalPath(resolved) {
+			return fmt.Errorf("path %q accesses .git directory which is not allowed", arg)
+		}
+	}
+	return nil
+}
+
+// validateOpenPath checks a file path before the interpreter opens it (for
+// redirections). This is called by the interpreter's OpenHandler, where
+// variables in redirect targets have been expanded to actual paths.
+func validateOpenPath(path string, workDir string, allowedPaths []string) error {
+	if path == "/dev/null" {
+		return nil
+	}
+	resolved := resolvePath(path, workDir)
+	if !isUnderAllowedPaths(resolved, allowedPaths) {
+		return fmt.Errorf("path %q resolves to %q which is outside allowed directories", path, resolved)
+	}
+	if isGitInternalPath(resolved) {
+		return fmt.Errorf("path %q accesses .git directory which is not allowed", path)
+	}
+	return nil
+}

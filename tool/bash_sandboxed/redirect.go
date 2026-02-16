@@ -45,12 +45,10 @@ func validateRedirect(r *syntax.Redirect) error {
 		// is handled separately by validatePaths via validateRedirectPaths.
 		return nil
 	case syntax.RdrOut, syntax.AppOut, syntax.ClbOut, syntax.RdrAll, syntax.AppAll:
-		// Output redirects are allowed to /dev/null and to paths within allowedPaths.
-		// Path validation is handled by validateRedirectPaths.
-		word := r.Word.Lit()
-		if word == "" {
-			return fmt.Errorf("output redirection with dynamic target is not allowed")
-		}
+		// Output redirects are allowed; path validation for literal targets is
+		// handled by validateRedirectPaths (preflight), and dynamic targets
+		// (e.g., > $FILE) are validated by the interpreter's OpenHandler after
+		// variable expansion.
 		return nil
 	case syntax.RdrInOut:
 		return fmt.Errorf("read-write redirection (<>) is not allowed")
