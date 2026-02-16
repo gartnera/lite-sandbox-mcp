@@ -7,9 +7,41 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+	"sync"
 
+	"github.com/gartnera/lite-sandbox-mcp/config"
 	"mvdan.cc/sh/v3/syntax"
 )
+
+// Sandbox executes bash commands after parsing and validating them against
+// the built-in allowlist plus any extra commands from config.
+type Sandbox struct {
+	mu              sync.RWMutex
+	extraCommands   map[string]bool
+}
+
+// NewSandbox creates a Sandbox with no extra commands.
+func NewSandbox() *Sandbox {
+	return &Sandbox{}
+}
+
+// UpdateConfig replaces the sandbox configuration with the provided config.
+func (s *Sandbox) UpdateConfig(cfg *config.Config) {
+	m := make(map[string]bool, len(cfg.ExtraCommands))
+	for _, c := range cfg.ExtraCommands {
+		m[c] = true
+	}
+	s.mu.Lock()
+	s.extraCommands = m
+	s.mu.Unlock()
+}
+
+// getExtraCommands returns a snapshot of the current extra commands.
+func (s *Sandbox) getExtraCommands() map[string]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.extraCommands
+}
 
 // ParseBash parses a command string as bash and returns the AST.
 func ParseBash(command string) (*syntax.File, error) {
@@ -22,11 +54,12 @@ func ParseBash(command string) (*syntax.File, error) {
 }
 
 // validate walks the parsed AST and enforces:
-// 1. All commands must be in the allowedCommands whitelist
+// 1. All commands must be in the allowedCommands whitelist or extra commands
 // 2. Redirections must pass validateRedirect (safe subset only)
 // 3. No process substitutions are permitted
 // 4. Per-command argument validators (e.g., blocking find -exec)
-func validate(f *syntax.File) error {
+func (s *Sandbox) validate(f *syntax.File) error {
+	extra := s.getExtraCommands()
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
 		if validationErr != nil {
@@ -47,7 +80,7 @@ func validate(f *syntax.File) error {
 					validationErr = fmt.Errorf("dynamic command names are not allowed")
 					return false
 				}
-				if !allowedCommands[cmdName] {
+				if !allowedCommands[cmdName] && !extra[cmdName] {
 					validationErr = fmt.Errorf("command %q is not allowed", cmdName)
 					return false
 				}
@@ -76,11 +109,11 @@ func extractCommandName(w *syntax.Word) string {
 	return w.Lit()
 }
 
-// BashSandboxed parses, validates, and executes a bash command.
+// Execute parses, validates, and executes a bash command.
 // workDir is the working directory for the command and for resolving relative paths.
 // allowedPaths are absolute directories that the command is permitted to access.
 // It returns the combined stdout and stderr output.
-func BashSandboxed(ctx context.Context, command string, workDir string, allowedPaths []string) (string, error) {
+func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, allowedPaths []string) (string, error) {
 	slog.InfoContext(ctx, "executing sandboxed bash", "command", command)
 
 	f, err := ParseBash(command)
@@ -88,7 +121,7 @@ func BashSandboxed(ctx context.Context, command string, workDir string, allowedP
 		return "", err
 	}
 
-	if err := validate(f); err != nil {
+	if err := s.validate(f); err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 

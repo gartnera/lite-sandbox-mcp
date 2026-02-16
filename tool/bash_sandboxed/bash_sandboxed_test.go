@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/gartnera/lite-sandbox-mcp/config"
 )
 
 func TestParseBash_Valid(t *testing.T) {
@@ -50,7 +52,7 @@ func TestParseBash_Invalid(t *testing.T) {
 
 func TestBashSandboxed_Executes(t *testing.T) {
 	workDir := t.TempDir()
-	out, err := BashSandboxed(context.Background(), "echo hello", workDir, []string{workDir})
+	out, err := NewSandbox().Execute(context.Background(), "echo hello", workDir, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -61,7 +63,7 @@ func TestBashSandboxed_Executes(t *testing.T) {
 
 func TestBashSandboxed_FailingCommand(t *testing.T) {
 	workDir := t.TempDir()
-	_, err := BashSandboxed(context.Background(), "false", workDir, []string{workDir})
+	_, err := NewSandbox().Execute(context.Background(), "false", workDir, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error for failing command")
 	}
@@ -69,7 +71,7 @@ func TestBashSandboxed_FailingCommand(t *testing.T) {
 
 func TestBashSandboxed_InvalidSyntax(t *testing.T) {
 	workDir := t.TempDir()
-	_, err := BashSandboxed(context.Background(), "echo 'hello", workDir, []string{workDir})
+	_, err := NewSandbox().Execute(context.Background(), "echo 'hello", workDir, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error for invalid syntax")
 	}
@@ -156,7 +158,7 @@ func TestValidate_AllowedCommands(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			if err := validate(f); err != nil {
+			if err := newTestSandbox().validate(f); err != nil {
 				t.Fatalf("expected command to be allowed, got: %v", err)
 			}
 		})
@@ -254,7 +256,7 @@ func TestValidate_BlockedCommands(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
@@ -279,7 +281,7 @@ func TestValidate_BlockedProcSubst(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for process substitution")
 			}
@@ -292,7 +294,7 @@ func TestValidate_BlockedInPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	err = validate(f)
+	err = newTestSandbox().validate(f)
 	if err == nil {
 		t.Fatal("expected validation error for blocked command in pipeline")
 	}
@@ -306,7 +308,7 @@ func TestValidate_BlockedInSubshell(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	err = validate(f)
+	err = newTestSandbox().validate(f)
 	if err == nil {
 		t.Fatal("expected validation error for blocked command in subshell")
 	}
@@ -317,7 +319,7 @@ func TestValidate_BlockedInIfBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	err = validate(f)
+	err = newTestSandbox().validate(f)
 	if err == nil {
 		t.Fatal("expected validation error for blocked command in if body")
 	}
@@ -328,7 +330,7 @@ func TestValidate_BlockedInForLoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	err = validate(f)
+	err = newTestSandbox().validate(f)
 	if err == nil {
 		t.Fatal("expected validation error for blocked command in for loop")
 	}
@@ -339,7 +341,7 @@ func TestValidate_BlockedInCommandSubstitution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	err = validate(f)
+	err = newTestSandbox().validate(f)
 	if err == nil {
 		t.Fatal("expected validation error for blocked command in command substitution")
 	}
@@ -351,8 +353,33 @@ func TestValidate_DynamicCommandBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	err = validate(f)
+	err = newTestSandbox().validate(f)
 	if err == nil {
 		t.Fatal("expected validation error for dynamic command name")
+	}
+}
+
+func TestValidate_ExtraCommands(t *testing.T) {
+	s := NewSandbox()
+
+	// curl should be blocked by default
+	f, err := ParseBash("curl https://example.com")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if err := s.validate(f); err == nil {
+		t.Fatal("expected curl to be blocked by default")
+	}
+
+	// After adding curl as an extra command, it should be allowed
+	s.UpdateConfig(&config.Config{ExtraCommands: []string{"curl"}})
+	if err := s.validate(f); err != nil {
+		t.Fatalf("expected curl to be allowed with extra commands, got: %v", err)
+	}
+
+	// After clearing extra commands, curl should be blocked again
+	s.UpdateConfig(&config.Config{})
+	if err := s.validate(f); err == nil {
+		t.Fatal("expected curl to be blocked after clearing extra commands")
 	}
 }

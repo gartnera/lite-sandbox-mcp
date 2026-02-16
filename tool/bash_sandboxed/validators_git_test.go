@@ -56,7 +56,7 @@ func TestValidate_AllowedGitSubcommands(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			if err := validate(f); err != nil {
+			if err := newTestSandbox().validate(f); err != nil {
 				t.Fatalf("expected command to be allowed, got: %v", err)
 			}
 		})
@@ -105,7 +105,7 @@ func TestValidate_BlockedGitSubcommands(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for blocked git subcommand")
 			}
@@ -139,7 +139,7 @@ func TestValidate_BlockedGitBranchFlags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for blocked git branch flag")
 			}
@@ -171,7 +171,7 @@ func TestValidate_BlockedGitTagFlags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for blocked git tag flag")
 			}
@@ -200,7 +200,7 @@ func TestValidate_BlockedGitConfig(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for blocked git config usage")
 			}

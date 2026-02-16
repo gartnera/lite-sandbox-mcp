@@ -9,6 +9,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 
+	"github.com/gartnera/lite-sandbox-mcp/config"
 	bash_sandboxed "github.com/gartnera/lite-sandbox-mcp/tool/bash_sandboxed"
 )
 
@@ -26,6 +27,11 @@ func init() {
 
 // NewMCPServer creates and configures the MCP server with all tools registered.
 func NewMCPServer() *server.MCPServer {
+	sandbox := bash_sandboxed.NewSandbox()
+	return newMCPServer(sandbox)
+}
+
+func newMCPServer(sandbox *bash_sandboxed.Sandbox) *server.MCPServer {
 	s := server.NewMCPServer(
 		"lite-sandbox-mcp",
 		"0.1.0",
@@ -40,31 +46,52 @@ func NewMCPServer() *server.MCPServer {
 		),
 	)
 
-	s.AddTool(bashTool, handleBashSandboxed)
+	s.AddTool(bashTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		command, err := request.RequireString("command")
+		if err != nil {
+			return mcp.NewToolResultError("missing required parameter: command"), nil
+		}
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			return mcp.NewToolResultError("failed to get working directory: " + err.Error()), nil
+		}
+
+		output, err := sandbox.Execute(ctx, command, cwd, []string{cwd})
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		return mcp.NewToolResultText(output), nil
+	})
 	return s
 }
 
 func runServe() error {
 	slog.Info("starting MCP server")
-	s := NewMCPServer()
+
+	sandbox := bash_sandboxed.NewSandbox()
+
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Warn("failed to load config, using defaults", "error", err)
+	} else {
+		sandbox.UpdateConfig(cfg)
+		slog.Info("loaded config", "extra_commands", cfg.ExtraCommands)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		err := config.Watch(ctx, func(cfg *config.Config) {
+			sandbox.UpdateConfig(cfg)
+			slog.Info("reloaded config", "extra_commands", cfg.ExtraCommands)
+		})
+		if err != nil && ctx.Err() == nil {
+			slog.Error("config watcher failed", "error", err)
+		}
+	}()
+
+	s := newMCPServer(sandbox)
 	return server.ServeStdio(s)
-}
-
-func handleBashSandboxed(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	command, err := request.RequireString("command")
-	if err != nil {
-		return mcp.NewToolResultError("missing required parameter: command"), nil
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return mcp.NewToolResultError("failed to get working directory: " + err.Error()), nil
-	}
-
-	output, err := bash_sandboxed.BashSandboxed(ctx, command, cwd, []string{cwd})
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	return mcp.NewToolResultText(output), nil
 }

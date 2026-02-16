@@ -27,7 +27,7 @@ func TestValidate_BlockedFindFlags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for blocked find flag")
 			}
@@ -56,7 +56,7 @@ func TestValidate_AllowedFindFlags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			if err := validate(f); err != nil {
+			if err := newTestSandbox().validate(f); err != nil {
 				t.Fatalf("expected command to be allowed, got: %v", err)
 			}
 		})
@@ -91,7 +91,7 @@ func TestValidate_BlockedTarFlags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for blocked tar flag")
 			}
@@ -118,7 +118,7 @@ func TestValidate_BlockedUnzipFlags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for blocked unzip usage")
 			}
@@ -149,7 +149,7 @@ func TestValidate_BlockedArFlags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for blocked ar operation")
 			}

@@ -78,7 +78,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	os.WriteFile(filepath.Join(workDir, "input.txt"), []byte("hello\n"), 0o644)
 
 	// Input redirect from file in allowed dir
-	out, err := BashSandboxed(context.Background(), "cat < "+workDir+"/input.txt", workDir, []string{workDir})
+	out, err := NewSandbox().Execute(context.Background(), "cat < "+workDir+"/input.txt", workDir, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	}
 
 	// Heredoc
-	out, err = BashSandboxed(context.Background(), "cat <<EOF\nworld\nEOF", workDir, []string{workDir})
+	out, err = NewSandbox().Execute(context.Background(), "cat <<EOF\nworld\nEOF", workDir, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	}
 
 	// /dev/null output
-	out, err = BashSandboxed(context.Background(), "echo hello > /dev/null", workDir, []string{workDir})
+	out, err = NewSandbox().Execute(context.Background(), "echo hello > /dev/null", workDir, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	}
 
 	// Output redirect to file in allowed dir
-	_, err = BashSandboxed(context.Background(), "echo hello > "+workDir+"/output.txt", workDir, []string{workDir})
+	_, err = NewSandbox().Execute(context.Background(), "echo hello > "+workDir+"/output.txt", workDir, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	}
 
 	// Append redirect to file in allowed dir
-	_, err = BashSandboxed(context.Background(), "echo world >> "+workDir+"/output.txt", workDir, []string{workDir})
+	_, err = NewSandbox().Execute(context.Background(), "echo world >> "+workDir+"/output.txt", workDir, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 
 func TestBashSandboxed_RedirectPathBlocked(t *testing.T) {
 	workDir := t.TempDir()
-	_, err := BashSandboxed(context.Background(), "cat < /etc/passwd", workDir, []string{workDir})
+	_, err := NewSandbox().Execute(context.Background(), "cat < /etc/passwd", workDir, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error for redirect path outside allowed dirs")
 	}
@@ -373,7 +373,7 @@ func TestValidatePaths_InSubshellAndPipeline(t *testing.T) {
 
 func TestBashSandboxed_PathBlocked(t *testing.T) {
 	workDir := t.TempDir()
-	_, err := BashSandboxed(context.Background(), "cat /etc/passwd", workDir, []string{workDir})
+	_, err := NewSandbox().Execute(context.Background(), "cat /etc/passwd", workDir, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error for path outside allowed dirs")
 	}

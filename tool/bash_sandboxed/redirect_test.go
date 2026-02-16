@@ -31,7 +31,7 @@ func TestValidate_AllowedRedirections(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			if err := validate(f); err != nil {
+			if err := newTestSandbox().validate(f); err != nil {
 				t.Fatalf("expected redirection to be allowed, got: %v", err)
 			}
 		})
@@ -58,7 +58,7 @@ func TestValidate_AllowedOutputRedirections(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			if err := validate(f); err != nil {
+			if err := newTestSandbox().validate(f); err != nil {
 				t.Fatalf("expected redirection to be allowed, got: %v", err)
 			}
 		})
@@ -80,7 +80,7 @@ func TestValidate_BlockedRedirections(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for redirection")
 			}

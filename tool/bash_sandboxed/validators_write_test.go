@@ -40,7 +40,7 @@ func TestValidate_AllowedWriteCommands(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			if err := validate(f); err != nil {
+			if err := newTestSandbox().validate(f); err != nil {
 				t.Fatalf("expected command to be allowed, got: %v", err)
 			}
 		})
@@ -61,7 +61,7 @@ func TestValidate_BlockedRmFlags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for blocked rm flag")
 			}
@@ -101,7 +101,7 @@ func TestValidate_BlockedSedCommands(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validate(f)
+			err = newTestSandbox().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error for blocked sed command")
 			}
