@@ -132,6 +132,22 @@ func TestValidate_AllowedCommands(t *testing.T) {
 		{"uname", "uname -a"},
 		{"timeout", "timeout 1 echo hello"},
 		{"command", "command -v echo"},
+		{"tar list", "tar -tf archive.tar"},
+		{"tar list verbose", "tar -tvf archive.tar"},
+		{"tar list gz", "tar -tzf archive.tar.gz"},
+		{"tar list bz2", "tar -tjf archive.tar.bz2"},
+		{"tar list xz", "tar -tJf archive.tar.xz"},
+		{"tar list long", "tar --list -f archive.tar"},
+		{"tar old style list", "tar tf archive.tar"},
+		{"tar old style list gz", "tar tzf archive.tar.gz"},
+		{"unzip list", "unzip -l archive.zip"},
+		{"unzip test", "unzip -t archive.zip"},
+		{"unzip zipinfo mode", "unzip -Z archive.zip"},
+		{"zipinfo", "zipinfo archive.zip"},
+		{"ar list", "ar t archive.a"},
+		{"ar print", "ar p archive.a"},
+		{"ar list with dash", "ar -t archive.a"},
+		{"ar print verbose", "ar tv archive.a"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -216,8 +232,6 @@ func TestValidate_BlockedCommands(t *testing.T) {
 		{"traceroute", "traceroute example.com", `command "traceroute" is not allowed`},
 
 		// Archive processing (arbitrary file writes)
-		{"tar", "tar xf archive.tar", `command "tar" is not allowed`},
-		{"unzip", "unzip archive.zip", `command "unzip" is not allowed`},
 		{"gzip", "gzip file", `command "gzip" is not allowed`},
 		{"gunzip", "gunzip file.gz", `command "gunzip" is not allowed`},
 
@@ -761,5 +775,102 @@ func TestBashSandboxed_PathBlocked(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "outside allowed directories") {
 		t.Fatalf("expected outside allowed directories error, got %q", err.Error())
+	}
+}
+
+func TestValidate_BlockedTarFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"tar extract", "tar -xf archive.tar", "tar flag '-x' is not allowed"},
+		{"tar create", "tar -cf archive.tar .", "tar flag '-c' is not allowed"},
+		{"tar append", "tar -rf archive.tar file", "tar flag '-r' is not allowed"},
+		{"tar update", "tar -uf archive.tar file", "tar flag '-u' is not allowed"},
+		{"tar delete", "tar --delete -f archive.tar file", `tar flag "--delete" is not allowed`},
+		{"tar extract long", "tar --extract -f archive.tar", `tar flag "--extract" is not allowed`},
+		{"tar get long", "tar --get -f archive.tar", `tar flag "--get" is not allowed`},
+		{"tar create long", "tar --create -f archive.tar .", `tar flag "--create" is not allowed`},
+		{"tar append long", "tar --append -f archive.tar file", `tar flag "--append" is not allowed`},
+		{"tar update long", "tar --update -f archive.tar file", `tar flag "--update" is not allowed`},
+		{"tar extract combined", "tar -xzf archive.tar.gz", "tar flag '-x' is not allowed"},
+		{"tar old style extract", "tar xf archive.tar", "tar flag 'x' is not allowed"},
+		{"tar old style create", "tar czf archive.tar.gz .", "tar flag 'c' is not allowed"},
+		{"tar no mode flag", "tar -f archive.tar", "tar is only allowed in list mode"},
+		{"tar verbose only", "tar -v", "tar is only allowed in list mode"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = validate(f)
+			if err == nil {
+				t.Fatal("expected validation error for blocked tar flag")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}
+
+func TestValidate_BlockedUnzipFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"unzip extract default", "unzip archive.zip", "unzip is only allowed with"},
+		{"unzip with dir", "unzip -d /tmp archive.zip", "unzip is only allowed with"},
+		{"unzip overwrite", "unzip -o archive.zip", "unzip is only allowed with"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = validate(f)
+			if err == nil {
+				t.Fatal("expected validation error for blocked unzip usage")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}
+
+func TestValidate_BlockedArFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"ar replace", "ar r archive.a file.o", "ar operation 'r' is not allowed"},
+		{"ar delete", "ar d archive.a file.o", "ar operation 'd' is not allowed"},
+		{"ar quick append", "ar q archive.a file.o", "ar operation 'q' is not allowed"},
+		{"ar extract", "ar x archive.a", "ar operation 'x' is not allowed"},
+		{"ar move", "ar m archive.a file.o", "ar operation 'm' is not allowed"},
+		{"ar no args", "ar", "ar requires an operation argument"},
+		{"ar create with s", "ar s archive.a", "ar operation 's' is not allowed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = validate(f)
+			if err == nil {
+				t.Fatal("expected validation error for blocked ar operation")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
 	}
 }
