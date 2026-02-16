@@ -19,9 +19,10 @@ import (
 // Sandbox executes bash commands after parsing and validating them against
 // the built-in allowlist plus any extra commands from config.
 type Sandbox struct {
-	mu            sync.RWMutex
-	extraCommands map[string]bool
-	gitConfig     *config.GitConfig
+	mu             sync.RWMutex
+	extraCommands  map[string]bool
+	gitConfig      *config.GitConfig
+	runtimesConfig *config.RuntimesConfig
 }
 
 // NewSandbox creates a Sandbox with no extra commands.
@@ -38,6 +39,7 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config) {
 	s.mu.Lock()
 	s.extraCommands = m
 	s.gitConfig = cfg.Git
+	s.runtimesConfig = cfg.Runtimes
 	s.mu.Unlock()
 }
 
@@ -53,6 +55,13 @@ func (s *Sandbox) getGitConfig() *config.GitConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.gitConfig
+}
+
+// getRuntimesConfig returns a snapshot of the current runtimes config.
+func (s *Sandbox) getRuntimesConfig() *config.RuntimesConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.runtimesConfig
 }
 
 // ParseBash parses a command string as bash and returns the AST.
@@ -100,6 +109,7 @@ func validateAssigns(assigns []*syntax.Assign) error {
 func (s *Sandbox) validate(f *syntax.File) error {
 	extra := s.getExtraCommands()
 	gitCfg := s.getGitConfig()
+	runtimesCfg := s.getRuntimesConfig()
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
 		if validationErr != nil {
@@ -124,11 +134,20 @@ func (s *Sandbox) validate(f *syntax.File) error {
 					validationErr = fmt.Errorf("dynamic command names are not allowed")
 					return false
 				}
-				if !allowedCommands[cmdName] && !extra[cmdName] {
+				// Handle runtime commands dynamically based on config
+				if cmdName == "go" {
+					if runtimesCfg == nil || runtimesCfg.Go == nil || !runtimesCfg.Go.GoEnabled() {
+						validationErr = fmt.Errorf("command %q is not allowed (runtimes.go.enabled is disabled)", cmdName)
+						return false
+					}
+					if err := validateGoArgs(n.Args, runtimesCfg.Go); err != nil {
+						validationErr = err
+						return false
+					}
+				} else if !allowedCommands[cmdName] && !extra[cmdName] {
 					validationErr = fmt.Errorf("command %q is not allowed", cmdName)
 					return false
-				}
-				if cmdName == "git" {
+				} else if cmdName == "git" {
 					if err := validateGitArgs(n.Args, gitCfg); err != nil {
 						validationErr = err
 						return false

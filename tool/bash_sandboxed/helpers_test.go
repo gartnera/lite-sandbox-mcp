@@ -20,3 +20,10 @@ func newTestSandboxWithGitConfig(gitCfg *config.GitConfig) *Sandbox {
 	s.UpdateConfig(&config.Config{Git: gitCfg})
 	return s
 }
+
+// newTestSandboxWithRuntimesConfig returns a Sandbox configured with the given RuntimesConfig.
+func newTestSandboxWithRuntimesConfig(runtimesCfg *config.RuntimesConfig) *Sandbox {
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{Runtimes: runtimesCfg})
+	return s
+}

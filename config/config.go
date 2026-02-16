@@ -53,11 +53,39 @@ func (g *GitConfig) GitRemoteWrite() bool {
 	return *g.RemoteWrite
 }
 
+// GoConfig controls granular Go runtime permission levels.
+type GoConfig struct {
+	Enabled  *bool `yaml:"enabled,omitempty"`
+	Generate *bool `yaml:"generate,omitempty"`
+}
+
+// GoEnabled returns whether go commands are allowed (default: false).
+func (g *GoConfig) GoEnabled() bool {
+	if g == nil || g.Enabled == nil {
+		return false
+	}
+	return *g.Enabled
+}
+
+// GoGenerate returns whether go generate is allowed (default: false).
+func (g *GoConfig) GoGenerate() bool {
+	if g == nil || g.Generate == nil {
+		return false
+	}
+	return *g.Generate
+}
+
+// RuntimesConfig controls code execution runtime permissions.
+type RuntimesConfig struct {
+	Go *GoConfig `yaml:"go,omitempty"`
+}
+
 // Config holds all user configuration. New fields can be added over time;
 // unknown YAML fields are silently ignored for forward compatibility.
 type Config struct {
-	ExtraCommands []string   `yaml:"extra_commands,omitempty"`
-	Git           *GitConfig `yaml:"git,omitempty"`
+	ExtraCommands []string        `yaml:"extra_commands,omitempty"`
+	Git           *GitConfig      `yaml:"git,omitempty"`
+	Runtimes      *RuntimesConfig `yaml:"runtimes,omitempty"`
 }
 
 // Path returns the platform-appropriate config file path.
