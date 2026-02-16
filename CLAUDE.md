@@ -26,3 +26,7 @@ This is an MCP (Model Context Protocol) server that exposes a single `bash_sandb
 **Key packages:**
 - `cmd/` — Cobra CLI setup and MCP server registration
 - `tool/` — Sandbox implementation (parsing, validation, execution)
+
+## Notes
+
+- always inspect `man` pages of commands you are asked to parse. you can rely on the local pages rather than using web fetch.
