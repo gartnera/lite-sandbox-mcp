@@ -1,6 +1,6 @@
 # lite-sandbox-mcp
 
-An MCP (Model Context Protocol) server that provides a `bash_sandboxed` tool a replacement for basic shell access in AI coding agents. The goal is to let agents run shell commands freely without per-command permission prompts, while enforcing safety through static analysis — commands are parsed into an AST and validated against a whitelist before execution.
+An MCP (Model Context Protocol) server that provides a `bash_sandboxed` tool as a replacement for basic shell access in AI coding agents. The goal is to let agents run shell commands freely without per-command permission prompts, while enforcing safety through static analysis and runtime validation — commands are parsed into an AST and validated against a whitelist, then executed via a shell interpreter with runtime path validation that catches variable expansion bypasses.
 
 ## Configuring with Claude Code
 
@@ -81,12 +81,21 @@ lite-sandbox-mcp config extra-commands remove curl
 
 ## Security Model
 
-Commands go through three validation layers before execution:
+Commands go through multiple validation layers:
+
+### Static preflight (AST-level, before execution)
 
 1. **Command whitelist** — Only explicitly allowed, non-destructive commands can run (e.g., `cat`, `ls`, `grep`, `find`). Code execution runtimes, networking tools, package managers, and shell escape commands are all blocked. Additional commands can be allowed via config.
 2. **Argument validation** — Per-command validators block dangerous flags (e.g., `find -exec`, `tar -x`, `git push`). Write commands (`cp`, `mv`, `rm`, `sed`, etc.) are allowed but path-validated.
-3. **Structural restrictions** — Process substitutions, coprocesses, read-write redirections, and dynamic command names are blocked. Output redirections are allowed but path-validated.
-4. **Path validation** — All path-like arguments (including paths embedded in flags like `-f/path` and `--file=/path`) are resolved to absolute paths with symlink resolution and checked against an allowed directory list (defaults to cwd). Access to `.git` directories is blocked.
+3. **Structural restrictions** — Process substitutions, coprocesses, read-write redirections, and dynamic command names are blocked.
+4. **Static path validation** — Literal path-like arguments (including paths embedded in flags like `-f/path` and `--file=/path`) are resolved to absolute paths with symlink resolution and checked against an allowed directory list (defaults to cwd). Access to `.git` directories is blocked.
+
+### Runtime validation (interpreter-level, during execution)
+
+Commands are executed via the [mvdan.cc/sh/v3](https://pkg.go.dev/mvdan.cc/sh/v3) shell interpreter rather than `bash -c`. This enables runtime validation after variable expansion:
+
+5. **Expanded path validation** — A `CallHandler` intercepts every command after variable and command substitution expansion, validating that all resolved path arguments stay within allowed directories. This catches bypasses like `cat $HOME/secret` that static analysis cannot resolve.
+6. **Redirect path validation** — An `OpenHandler` intercepts all file opens from redirections (e.g., `< $FILE`, `> $OUTPUT`), validating expanded paths before any I/O occurs.
 
 ## Known Limitations
 
@@ -94,20 +103,19 @@ This is a lightweight, best-effort sandbox based on static analysis. It is **not
 
 ### Path validation bypasses
 
-- **Variable expansions in arguments**: Arguments containing variable expansions (e.g., `cat $HOME/secret`) cannot be statically resolved and are skipped during path validation. The command whitelist limits what damage can be done, but file reads outside allowed directories are possible via variable-constructed paths.
-- **Glob expansion**: Glob patterns are validated as literal strings (e.g., `cat ./*.txt` checks the prefix `./`), but bash expands globs at runtime. A glob rooted inside the allowed directory cannot expand outside it, but this relies on the filesystem not containing adversarial symlinks within the allowed directory.
+- **Glob expansion**: Glob patterns are validated as literal strings (e.g., `cat ./*.txt` checks the prefix `./`), but the interpreter expands globs at runtime. A glob rooted inside the allowed directory cannot expand outside it, but this relies on the filesystem not containing adversarial symlinks within the allowed directory.
 - **Multi-char short flag ambiguity**: For short flags like `-la`, the extractor assumes single-char flag + value (extracting `a`). This is conservative and doesn't cause false negatives for path validation since `a` alone won't pass the `looksLikePath` check, but a combined flag like `-abc/etc/passwd` would only check `bc/etc/passwd` (missing the leading character).
 
 ### Command validation limitations
 
 - **Per-command argument validation**: Some whitelisted commands have dangerous flags that are blocked via argument validators. For `find`, the flags `-exec`, `-execdir`, `-ok`, `-okdir`, `-delete`, `-fls`, `-fprint`, `-fprint0`, and `-fprintf` are all blocked. Other commands like `xxd` can write files with `-r` when combined with redirections (though redirections are blocked).
 - **No syscall-level enforcement**: Validation happens at the AST level before execution. There is no runtime enforcement (no seccomp, no namespace isolation). If a command is allowed and passes validation, it runs with the full privileges of the server process.
-- **Bash builtins**: Some allowed builtins like `set`, `export`, and `trap` can modify shell state in ways that affect subsequent commands within the same `bash -c` invocation.
+- **Bash builtins**: Some allowed builtins like `set`, `export`, and `trap` can modify shell state in ways that affect subsequent commands within the same invocation.
 
 ### General limitations
 
 - **Not a security boundary**: This sandbox is defense-in-depth for limiting an LLM's access to the host system. It should not be the sole security mechanism. For untrusted workloads, use OS-level isolation (containers, VMs, seccomp-bpf).
-- **Static analysis only**: All validation is based on the parsed AST. Runtime behavior (variable expansion, glob expansion, command output) is not monitored or restricted.
+- **Interpreter differences**: Commands are executed via the mvdan.cc/sh interpreter rather than GNU bash. While it supports standard POSIX and bash features, some GNU bash extensions may behave differently.
 - **Extra commands bypass validation**: Commands added via `extra_commands` config are allowed without any argument validation. Only add commands you trust.
 
 ## Building
