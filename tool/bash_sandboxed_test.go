@@ -381,6 +381,37 @@ func TestValidate_DynamicCommandBlocked(t *testing.T) {
 	}
 }
 
+func TestExtractPathFromFlag(t *testing.T) {
+	tests := []struct {
+		flag     string
+		expected string
+	}{
+		// Short flags with embedded paths
+		{"-f/etc/passwd", "/etc/passwd"},
+		{"-I../include", "../include"},
+		{"-L/usr/lib", "/usr/lib"},
+		// Long flags with = separator
+		{"--file=/etc/passwd", "/etc/passwd"},
+		{"--output=/tmp/out", "/tmp/out"},
+		// No embedded path
+		{"-l", ""},
+		{"-la", "a"},  // single-char flag 'l', value 'a'; looksLikePath filters it
+		{"--verbose", ""},
+		{"--count", ""},
+		{"-n", ""},
+		// Long flag without =
+		{"--file", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.flag, func(t *testing.T) {
+			got := extractPathFromFlag(tt.flag)
+			if got != tt.expected {
+				t.Fatalf("extractPathFromFlag(%q) = %q, want %q", tt.flag, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestValidatePaths_Allowed(t *testing.T) {
 	workDir := t.TempDir()
 
@@ -405,6 +436,10 @@ func TestValidatePaths_Allowed(t *testing.T) {
 		{"workdir absolute", "cat " + workDir + "/file.txt"},
 		{"non-path args", "echo hello world"},
 		{"grep with pattern", "grep pattern file.txt"},
+		{"short flag no value", "ls -la"},
+		{"long flag no value", "grep --count pattern"},
+		{"long flag with eq local path", "grep --file=" + workDir + "/file.txt pattern"},
+		{"short flag with local path", "cat -n ./file.txt"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -437,6 +472,9 @@ func TestValidatePaths_Blocked(t *testing.T) {
 		{"head outside", "head -5 /etc/hostname", "outside allowed directories"},
 		{"du outside", "du -sh /tmp", "outside allowed directories"},
 		{"diff outside", "diff /dev/null /dev/null", "outside allowed directories"},
+		{"short flag embedded path", "grep -f/etc/passwd pattern", "outside allowed directories"},
+		{"long flag embedded path", "grep --file=/etc/passwd pattern", "outside allowed directories"},
+		{"short flag dot dot", "grep -f../../etc/passwd pattern", "outside allowed directories"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

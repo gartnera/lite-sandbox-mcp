@@ -231,13 +231,17 @@ func validatePaths(f *syntax.File, workDir string, allowedPaths []string) error 
 			if lit == "" {
 				continue // dynamic/non-literal argument
 			}
+			var pathToCheck string
 			if strings.HasPrefix(lit, "-") {
-				continue // flag
+				// Extract any path embedded in a flag (e.g., -f/etc/passwd, --file=/etc/passwd)
+				pathToCheck = extractPathFromFlag(lit)
+			} else {
+				pathToCheck = lit
 			}
-			if !looksLikePath(lit) {
+			if pathToCheck == "" || !looksLikePath(pathToCheck) {
 				continue
 			}
-			resolved := resolvePath(lit, workDir)
+			resolved := resolvePath(pathToCheck, workDir)
 			if !isUnderAllowedPaths(resolved, allowedPaths) {
 				validationErr = fmt.Errorf("path %q resolves to %q which is outside allowed directories", lit, resolved)
 				return false
@@ -262,6 +266,30 @@ func looksLikePath(s string) bool {
 		return true
 	}
 	return false
+}
+
+// extractPathFromFlag extracts an embedded path value from a flag argument.
+// Handles two forms:
+//   - Long flags with '=': --file=/etc/passwd → /etc/passwd
+//   - Short flags with appended value: -f/etc/passwd → /etc/passwd
+//
+// Returns empty string if no embedded path is found.
+func extractPathFromFlag(flag string) string {
+	// Long flag with = separator: --file=/etc/passwd
+	if strings.HasPrefix(flag, "--") {
+		if idx := strings.Index(flag, "="); idx != -1 {
+			return flag[idx+1:]
+		}
+		return ""
+	}
+	// Short flag with appended value: -f/etc/passwd
+	// Must be -X<value> where X is a single letter
+	if len(flag) > 2 && flag[0] == '-' && flag[1] != '-' {
+		// The value starts after the flag letter(s). For single-char flags
+		// like -f, the value is at index 2. Return it and let looksLikePath decide.
+		return flag[2:]
+	}
+	return ""
 }
 
 // resolvePath resolves a potentially relative path to an absolute path,
