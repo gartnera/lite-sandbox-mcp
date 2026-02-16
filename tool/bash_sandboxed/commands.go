@@ -10,7 +10,8 @@ import "mvdan.cc/sh/v3/syntax"
 //   - Archive write: gzip, etc. (arbitrary file writes to sensitive locations)
 //   - tar, unzip, ar are allowed with arg validators restricting to read-only operations
 //   - Shell escape: eval, exec, source, xargs (bypass command whitelist)
-//   - Version control: git, gh (can execute hooks, fetch remote code)
+//   - Version control: gh (can execute hooks, fetch remote code)
+//   - git is allowed with arg validator restricting to read-only subcommands
 //   - Package managers: npm, pip, cargo, etc. (arbitrary code execution via install scripts)
 //
 // When in doubt, commands are excluded.
@@ -133,6 +134,9 @@ var allowedCommands = map[string]bool{
 	"zipinfo": true,
 	"ar":      true,
 
+	// Version control (read-only, with arg validator for git)
+	"git": true,
+
 	// Control flow / job control
 	"sleep":    true,
 	"wait":     true,
@@ -163,4 +167,5 @@ var commandArgValidators = map[string]func(args []*syntax.Word) error{
 	"tar":   validateTarArgs,
 	"unzip": validateUnzipArgs,
 	"ar":    validateArArgs,
+	"git":   validateGitArgs,
 }

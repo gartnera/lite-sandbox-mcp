@@ -222,6 +222,43 @@ func TestValidatePaths_Blocked(t *testing.T) {
 	}
 }
 
+func TestValidatePaths_GitDirectoryBlocked(t *testing.T) {
+	workDir := t.TempDir()
+
+	// Create a .git directory structure
+	os.MkdirAll(filepath.Join(workDir, ".git", "hooks"), 0o755)
+	os.WriteFile(filepath.Join(workDir, ".git", "config"), []byte("[core]"), 0o644)
+	os.WriteFile(filepath.Join(workDir, ".git", "hooks", "pre-commit"), []byte("#!/bin/sh"), 0o755)
+
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"cat .git/config", "cat .git/config", "accesses .git directory"},
+		{"cat .git/hooks/pre-commit", "cat .git/hooks/pre-commit", "accesses .git directory"},
+		{"ls .git", "ls .git", "accesses .git directory"},
+		{"ls .git/hooks", "ls .git/hooks", "accesses .git directory"},
+		{"find .git", "find .git -name '*.sample'", "accesses .git directory"},
+		{"absolute .git", "cat " + workDir + "/.git/config", "accesses .git directory"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = validatePaths(f, workDir, []string{workDir})
+			if err == nil {
+				t.Fatal("expected path validation error for .git access")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}
+
 func TestValidatePaths_SymlinkEscape(t *testing.T) {
 	workDir := t.TempDir()
 

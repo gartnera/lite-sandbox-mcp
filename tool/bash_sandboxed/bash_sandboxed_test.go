@@ -236,7 +236,6 @@ func TestValidate_BlockedCommands(t *testing.T) {
 		{"gunzip", "gunzip file.gz", `command "gunzip" is not allowed`},
 
 		// Version control (hook execution, remote code fetch)
-		{"git", "git clone https://example.com/repo", `command "git" is not allowed`},
 		{"gh", "gh pr list", `command "gh" is not allowed`},
 		{"svn", "svn checkout https://example.com/repo", `command "svn" is not allowed`},
 

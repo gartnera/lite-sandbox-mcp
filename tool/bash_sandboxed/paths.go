@@ -36,12 +36,21 @@ func validatePaths(f *syntax.File, workDir string, allowedPaths []string) error 
 			} else {
 				pathToCheck = lit
 			}
+			// Check for .git access even if it doesn't look like a typical path
+			if pathToCheck == ".git" || strings.HasPrefix(pathToCheck, ".git/") || strings.HasPrefix(pathToCheck, ".git\\") {
+				validationErr = fmt.Errorf("path %q accesses .git directory which is not allowed", lit)
+				return false
+			}
 			if pathToCheck == "" || !looksLikePath(pathToCheck) {
 				continue
 			}
 			resolved := resolvePath(pathToCheck, workDir)
 			if !isUnderAllowedPaths(resolved, allowedPaths) {
 				validationErr = fmt.Errorf("path %q resolves to %q which is outside allowed directories", lit, resolved)
+				return false
+			}
+			if isGitInternalPath(resolved) {
+				validationErr = fmt.Errorf("path %q accesses .git directory which is not allowed", lit)
 				return false
 			}
 		}
@@ -85,6 +94,20 @@ func validateRedirectPaths(f *syntax.File, workDir string, allowedPaths []string
 		return true
 	})
 	return validationErr
+}
+
+// isGitInternalPath returns true if the resolved path is inside a .git directory.
+// Direct access to .git contents is blocked to prevent reading sensitive data
+// (hooks, config) and to force usage through the git command with its validator.
+func isGitInternalPath(resolved string) bool {
+	// Check each path component for ".git"
+	parts := strings.Split(resolved, string(filepath.Separator))
+	for _, part := range parts {
+		if part == ".git" {
+			return true
+		}
+	}
+	return false
 }
 
 // looksLikePath returns true if the string looks like it references a filesystem
