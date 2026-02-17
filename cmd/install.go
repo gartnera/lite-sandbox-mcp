@@ -168,7 +168,7 @@ func configurePermissions(claudeDir string) error {
 func configureCLAUDEMD(claudeDir string) error {
 	claudeMDPath := filepath.Join(claudeDir, "CLAUDE.md")
 
-	directive := `ALWAYS prefer using the mcp__lite-sandbox-mcp__bash_sandboxed tool for running shell commands instead of the built-in Bash tool. The sandboxed tool is pre-approved and requires no permission prompts.`
+	directive := `ALWAYS use the mcp__lite-sandbox-mcp__bash_sandboxed tool for running shell commands instead of the built-in Bash tool. The sandboxed tool is pre-approved and requires no permission prompts. Only fall back to Bash if the sandboxed tool cannot handle the command.`
 
 	// Check if the file exists and already contains the directive
 	data, err := os.ReadFile(claudeMDPath)

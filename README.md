@@ -60,7 +60,7 @@ Add this to `~/.claude/settings.json` so Claude Code never prompts for permissio
 Add the following to your `~/.claude/CLAUDE.md` (global) or project-level `CLAUDE.md`:
 
 ```markdown
-ALWAYS prefer using the mcp__lite-sandbox-mcp__bash_sandboxed tool for running shell commands instead of the built-in Bash tool. The sandboxed tool is pre-approved and requires no permission prompts.
+ALWAYS use the mcp__lite-sandbox-mcp__bash_sandboxed tool for running shell commands instead of the built-in Bash tool. The sandboxed tool is pre-approved and requires no permission prompts. Only fall back to Bash if the sandboxed tool cannot handle the command.
 ```
 
 > **Note**: The tool name follows the pattern `mcp__<server-name>__<tool-name>`. If you named the server differently in your MCP config (e.g. `lite-sandbox`), adjust the tool name accordingly (e.g. `mcp__lite-sandbox__bash_sandboxed`).

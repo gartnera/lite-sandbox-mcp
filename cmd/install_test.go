@@ -182,7 +182,7 @@ func TestConfigureCLAUDEMD(t *testing.T) {
 	}
 
 	content := string(data)
-	expectedDirective := "ALWAYS prefer using the mcp__lite-sandbox-mcp__bash_sandboxed tool"
+	expectedDirective := "ALWAYS use the mcp__lite-sandbox-mcp__bash_sandboxed tool"
 	if !contains(content, expectedDirective) {
 		t.Errorf("expected CLAUDE.md to contain %q, got:\n%s", expectedDirective, content)
 	}
