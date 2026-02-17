@@ -115,6 +115,12 @@ func detectRuntimeBinds(runtimes *config.RuntimesConfig) []string {
 		binds = append(binds, goBinds...)
 	}
 
+	// Detect pnpm paths if pnpm runtime is enabled
+	if runtimes.Pnpm != nil && runtimes.Pnpm.PnpmEnabled() {
+		pnpmBinds := detectPnpmBinds()
+		binds = append(binds, pnpmBinds...)
+	}
+
 	return binds
 }
 
@@ -141,6 +147,26 @@ func detectGoBinds() []string {
 		slog.Info("detected Go runtime paths", "paths", paths)
 	}
 
+	return paths
+}
+
+// detectPnpmBinds detects pnpm paths that need to be writable.
+// Returns the pnpm store directory where packages are cached.
+func detectPnpmBinds() []string {
+	cmd := exec.Command("pnpm", "store", "path")
+	output, err := cmd.Output()
+	if err != nil {
+		slog.Warn("failed to detect pnpm paths", "error", err)
+		return nil
+	}
+
+	storePath := strings.TrimSpace(string(output))
+	if storePath == "" {
+		return nil
+	}
+
+	paths := []string{storePath}
+	slog.Info("detected pnpm runtime paths", "paths", paths)
 	return paths
 }
 
@@ -221,6 +247,15 @@ func (s *Sandbox) validate(f *syntax.File) error {
 						return false
 					}
 					if err := validateGoArgs(n.Args, runtimesCfg.Go); err != nil {
+						validationErr = err
+						return false
+					}
+				} else if cmdName == "pnpm" {
+					if runtimesCfg == nil || runtimesCfg.Pnpm == nil || !runtimesCfg.Pnpm.PnpmEnabled() {
+						validationErr = fmt.Errorf("command %q is not allowed (runtimes.pnpm.enabled is disabled)", cmdName)
+						return false
+					}
+					if err := validatePnpmArgs(n.Args, runtimesCfg.Pnpm); err != nil {
 						validationErr = err
 						return false
 					}

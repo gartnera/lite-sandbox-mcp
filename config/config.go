@@ -75,9 +75,32 @@ func (g *GoConfig) GoGenerate() bool {
 	return *g.Generate
 }
 
+// PnpmConfig controls granular pnpm runtime permission levels.
+type PnpmConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+	Publish *bool `yaml:"publish,omitempty"`
+}
+
+// PnpmEnabled returns whether pnpm commands are allowed (default: false).
+func (p *PnpmConfig) PnpmEnabled() bool {
+	if p == nil || p.Enabled == nil {
+		return false
+	}
+	return *p.Enabled
+}
+
+// PnpmPublish returns whether pnpm publish is allowed (default: false).
+func (p *PnpmConfig) PnpmPublish() bool {
+	if p == nil || p.Publish == nil {
+		return false
+	}
+	return *p.Publish
+}
+
 // RuntimesConfig controls code execution runtime permissions.
 type RuntimesConfig struct {
-	Go *GoConfig `yaml:"go,omitempty"`
+	Go   *GoConfig   `yaml:"go,omitempty"`
+	Pnpm *PnpmConfig `yaml:"pnpm,omitempty"`
 }
 
 // Config holds all user configuration. New fields can be added over time;

@@ -126,6 +126,43 @@ The `go generate` subcommand requires explicit opt-in since it can execute arbit
 
 See `e2e/claude/test_go_runtime_e2e.py` for a complete example demonstrating a Go development workflow (module init, testing, git workflow) using only the sandboxed tool.
 
+## pnpm Runtime Support
+
+pnpm commands are disabled by default. Enable them via config:
+
+```yaml
+runtimes:
+  pnpm:
+    enabled: true   # Allow pnpm install, add, test, run, etc. (default: false)
+    publish: false  # Allow pnpm publish (default: false)
+```
+
+Enable pnpm via CLI:
+
+```bash
+# Enable pnpm commands
+lite-sandbox-mcp config runtimes pnpm enable
+
+# Enable with publish permission
+lite-sandbox-mcp config runtimes pnpm enable --with-publish
+
+# Show current pnpm configuration
+lite-sandbox-mcp config runtimes pnpm show
+```
+
+pnpm runtime commands enable safe package management workflows:
+
+```bash
+pnpm install
+pnpm add react
+pnpm test
+pnpm run build
+```
+
+Security features:
+- `pnpm dlx` is blocked (downloads and executes remote packages)
+- `pnpm publish` requires explicit opt-in since it affects the npm registry (shared state)
+
 ## Security Model
 
 Commands go through multiple validation layers:
