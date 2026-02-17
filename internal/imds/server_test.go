@@ -71,9 +71,10 @@ func TestServer_SecretToken(t *testing.T) {
 		t.Error("servers should have different secret tokens")
 	}
 
-	// Verify secret tokens are in the endpoint
-	if !strings.Contains(server1.Endpoint(), server1.secretToken) {
-		t.Error("endpoint should contain secret token")
+	// Verify endpoints are standard format (no secret token in path for AWS SDK compatibility)
+	endpoint1 := server1.Endpoint()
+	if !strings.HasPrefix(endpoint1, "http://") || !strings.HasSuffix(endpoint1, "/") {
+		t.Errorf("endpoint should be http://host:port/ format, got: %s", endpoint1)
 	}
 
 	t.Logf("Token 1 length: %d", len(server1.secretToken))

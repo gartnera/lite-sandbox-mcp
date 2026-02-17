@@ -15,7 +15,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
 // Server implements an IMDSv2-compatible HTTP server that provides AWS credentials
@@ -31,11 +30,11 @@ type Server struct {
 	listener     net.Listener
 }
 
-// credentialCache stores temporary AWS credentials and their expiry time.
+// credentialCache stores AWS credentials and their expiry time.
 type credentialCache struct {
-	mu          sync.RWMutex
-	credentials *sts.GetSessionTokenOutput
-	expiresAt   time.Time
+	mu        sync.RWMutex
+	awsCreds  *aws.Credentials
+	expiresAt time.Time
 }
 
 // sessionStore stores IMDSv2 session tokens and their expiry times.
@@ -76,23 +75,24 @@ func NewServer(addr string, profile string) (*Server, error) {
 
 // Endpoint returns the full IMDS endpoint URL to pass to AWS CLI via
 // AWS_EC2_METADATA_SERVICE_ENDPOINT environment variable.
+// Returns base URL with trailing slash (AWS SDK appends paths like /latest/api/token).
 func (s *Server) Endpoint() string {
-	return fmt.Sprintf("http://%s/%s", s.addr, s.secretToken)
+	return fmt.Sprintf("http://%s/", s.addr)
 }
 
 // Start starts the IMDS HTTP server. This blocks until the server is shut down.
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
-	// IMDSv2 endpoints with secret token prefix
-	prefix := "/" + s.secretToken
+	// IMDSv2 endpoints at standard paths (no secret token prefix)
+	// Security relies on: localhost binding + random port + OS sandbox blocking ~/.aws
 
 	// IMDSv2 token generation endpoint
-	mux.HandleFunc("PUT "+prefix+"/latest/api/token", s.handleGetToken)
+	mux.HandleFunc("PUT /latest/api/token", s.handleGetToken)
 
 	// Credential endpoints
-	mux.HandleFunc("GET "+prefix+"/latest/meta-data/iam/security-credentials/", s.handleListRoles)
-	mux.HandleFunc("GET "+prefix+"/latest/meta-data/iam/security-credentials/{role}", s.handleGetCredentials)
+	mux.HandleFunc("GET /latest/meta-data/iam/security-credentials/", s.handleListRoles)
+	mux.HandleFunc("GET /latest/meta-data/iam/security-credentials/{role}", s.handleGetCredentials)
 
 	s.server = &http.Server{
 		Handler: mux,
@@ -175,7 +175,10 @@ func (s *Server) handleGetCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get or refresh credentials
-	creds, err := s.getCredentials(r.Context())
+	// Use background context with timeout to avoid request cancellation affecting credential fetch
+	credCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	creds, err := s.getCredentials(credCtx)
 	if err != nil {
 		slog.Error("failed to get credentials", "error", err)
 		http.Error(w, "Failed to get credentials", http.StatusInternalServerError)
@@ -183,14 +186,14 @@ func (s *Server) handleGetCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Format as IMDSv2 JSON response
-	response := map[string]interface{}{
+	response := map[string]any{
 		"Code":            "Success",
 		"LastUpdated":     time.Now().Format(time.RFC3339),
 		"Type":            "AWS-HMAC",
-		"AccessKeyId":     *creds.Credentials.AccessKeyId,
-		"SecretAccessKey": *creds.Credentials.SecretAccessKey,
-		"Token":           *creds.Credentials.SessionToken,
-		"Expiration":      creds.Credentials.Expiration.Format(time.RFC3339),
+		"AccessKeyId":     creds.AccessKeyID,
+		"SecretAccessKey": creds.SecretAccessKey,
+		"Token":           creds.SessionToken,
+		"Expiration":      creds.Expires.Format(time.RFC3339),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -225,19 +228,20 @@ func (s *Server) validateSession(r *http.Request) bool {
 }
 
 // getCredentials fetches or returns cached AWS credentials.
-// Uses AWS STS GetSessionToken to create temporary credentials from the configured profile.
-func (s *Server) getCredentials(ctx context.Context) (*sts.GetSessionTokenOutput, error) {
+// For SSO/temporary credentials, returns them directly.
+// For IAM user credentials, could use STS GetSessionToken but we just pass through for simplicity.
+func (s *Server) getCredentials(ctx context.Context) (*aws.Credentials, error) {
 	s.credCache.mu.Lock()
 	defer s.credCache.mu.Unlock()
 
 	// Check if cached credentials are still valid (refresh 5 min before expiry)
-	if s.credCache.credentials != nil &&
+	if s.credCache.awsCreds != nil &&
 		time.Now().Before(s.credCache.expiresAt.Add(-5*time.Minute)) {
 		slog.Debug("using cached credentials")
-		return s.credCache.credentials, nil
+		return s.credCache.awsCreds, nil
 	}
 
-	slog.Info("fetching new credentials from AWS STS", "profile", s.profile)
+	slog.Info("fetching credentials from profile", "profile", s.profile)
 
 	// Load AWS config with specified profile
 	cfg, err := config.LoadDefaultConfig(ctx,
@@ -247,21 +251,20 @@ func (s *Server) getCredentials(ctx context.Context) (*sts.GetSessionTokenOutput
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	// Call STS GetSessionToken to get temporary credentials
-	stsClient := sts.NewFromConfig(cfg)
-	result, err := stsClient.GetSessionToken(ctx, &sts.GetSessionTokenInput{
-		DurationSeconds: aws.Int32(3600), // 1 hour
-	})
+	// Retrieve credentials from the profile
+	// This handles SSO, assume-role, and IAM user credentials automatically
+	creds, err := cfg.Credentials.Retrieve(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get session token: %w", err)
+		return nil, fmt.Errorf("failed to retrieve credentials: %w", err)
 	}
 
 	// Cache credentials
-	s.credCache.credentials = result
-	s.credCache.expiresAt = *result.Credentials.Expiration
+	s.credCache.awsCreds = &creds
+	s.credCache.expiresAt = creds.Expires
 
-	slog.Info("fetched new credentials",
-		"expiration", result.Credentials.Expiration.Format(time.RFC3339))
+	slog.Info("fetched credentials",
+		"expires", creds.Expires.Format(time.RFC3339),
+		"source", creds.Source)
 
-	return result, nil
+	return &creds, nil
 }

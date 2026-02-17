@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -56,15 +57,17 @@ func runShell() error {
 
 		// Start IMDS server in background
 		go func() {
-			fmt.Fprintf(os.Stderr, "IMDS server: %s\n", imdsServer.Endpoint())
+			slog.Debug("starting IMDS server", "endpoint", imdsServer.Endpoint())
 			if err := imdsServer.Start(); err != nil && err != http.ErrServerClosed {
-				fmt.Fprintf(os.Stderr, "IMDS server error: %v\n", err)
+				slog.Error("IMDS server failed", "error", err)
 			}
 		}()
 		defer func() {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer shutdownCancel()
-			imdsServer.Shutdown(shutdownCtx)
+			if err := imdsServer.Shutdown(shutdownCtx); err != nil {
+				slog.Error("failed to shutdown IMDS server", "error", err)
+			}
 		}()
 
 		// Set IMDS endpoint in sandbox
