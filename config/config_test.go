@@ -24,7 +24,8 @@ func TestPath(t *testing.T) {
 func TestLoadSave(t *testing.T) {
 	// Override the config path to a temp dir.
 	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmp)
+	configPath := filepath.Join(tmp, "config.yaml")
+	t.Setenv("LITE_SANDBOX_CONFIG", configPath)
 
 	// Load should return zero-value config when file doesn't exist.
 	cfg, err := Load()
@@ -52,14 +53,11 @@ func TestLoadSave(t *testing.T) {
 
 func TestLoadUnknownFields(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmp)
+	configPath := filepath.Join(tmp, "config.yaml")
+	t.Setenv("LITE_SANDBOX_CONFIG", configPath)
 
-	dir := filepath.Join(tmp, appName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	data := []byte("extra_commands:\n  - curl\nfuture_field: value\n")
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), data, 0o644); err != nil {
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -74,7 +72,8 @@ func TestLoadUnknownFields(t *testing.T) {
 
 func TestWatch(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmp)
+	configPath := filepath.Join(tmp, "config.yaml")
+	t.Setenv("LITE_SANDBOX_CONFIG", configPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

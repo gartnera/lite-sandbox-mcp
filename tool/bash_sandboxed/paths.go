@@ -216,10 +216,18 @@ func resolveExistingPrefix(path string) string {
 }
 
 // IsUnderAllowedPaths checks whether the resolved path is equal to or nested
-// under one of the allowed directories.
+// under one of the allowed directories. It resolves symlinks in the allowed
+// paths to ensure comparisons work correctly on systems where directories
+// may be accessed through symlinks (e.g., /var -> /private/var on macOS).
 func IsUnderAllowedPaths(path string, allowedPaths []string) bool {
 	for _, allowed := range allowedPaths {
-		if path == allowed || strings.HasPrefix(path, allowed+string(filepath.Separator)) {
+		// Resolve symlinks in the allowed path for accurate comparison
+		resolvedAllowed, err := filepath.EvalSymlinks(allowed)
+		if err != nil {
+			// If we can't resolve, try the original path
+			resolvedAllowed = allowed
+		}
+		if path == resolvedAllowed || strings.HasPrefix(path, resolvedAllowed+string(filepath.Separator)) {
 			return true
 		}
 	}
