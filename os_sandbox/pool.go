@@ -44,7 +44,8 @@ type Worker struct {
 
 // StartWorker starts a new bwrap sandbox worker process.
 // The worker runs the "lite-sandbox-mcp sandbox-worker" subcommand inside bwrap.
-func StartWorker(ctx context.Context, workDir string) (*Worker, error) {
+// extraBinds specifies additional writable paths to bind mount (e.g., for runtimes).
+func StartWorker(ctx context.Context, workDir string, extraBinds []string) (*Worker, error) {
 	// Find our own binary path to pass to bwrap
 	self, err := os.Executable()
 	if err != nil {
@@ -86,10 +87,13 @@ func StartWorker(ctx context.Context, workDir string) (*Worker, error) {
 	slog.InfoContext(ctx, "starting worker", "binary", self, "workDir", realWorkDir)
 
 	// Build bwrap command
-	// Strategy: bind root read-only, then rebind workDir as writable
-	// Note: We don't use --tmpfs /tmp because workDir might be under /tmp (e.g., in tests)
+	// Strategy: bind root read-only, add writable tmpfs for /tmp, add runtime binds, then rebind workDir as writable
+	// The order matters: later mounts can override earlier ones, so workDir bind comes last
+	// and will override the tmpfs if workDir is under /tmp (e.g., in tests)
 	// --ro-bind / / : read-only root filesystem
-	// --bind <cwd> <cwd> : writable current working directory
+	// --tmpfs /tmp : writable /tmp (needed by Go and other tools for build cache)
+	// --bind <runtime-path> <runtime-path> : writable runtime directories (GOPATH, etc.)
+	// --bind <cwd> <cwd> : writable current working directory (overrides tmpfs if under /tmp)
 	// --dev /dev : fresh devtmpfs
 	// --proc /proc : fresh procfs
 	// --unshare-all --share-net : unshare everything except network
@@ -97,6 +101,21 @@ func StartWorker(ctx context.Context, workDir string) (*Worker, error) {
 	// --chdir <cwd> : start in working directory
 	args := []string{
 		"--ro-bind", "/", "/",
+		"--tmpfs", "/tmp",
+	}
+
+	// Add runtime bind mounts (e.g., GOPATH for Go runtime)
+	for _, path := range extraBinds {
+		// Create the directory if it doesn't exist
+		if err := os.MkdirAll(path, 0755); err != nil {
+			slog.WarnContext(ctx, "failed to create runtime bind path", "path", path, "error", err)
+			continue
+		}
+		args = append(args, "--bind", path, path)
+	}
+
+	// Add workDir bind and remaining args
+	args = append(args,
 		"--bind", realWorkDir, realWorkDir,
 		"--dev", "/dev",
 		"--proc", "/proc",
@@ -106,7 +125,7 @@ func StartWorker(ctx context.Context, workDir string) (*Worker, error) {
 		"--chdir", realWorkDir,
 		"--",
 		self, "sandbox-worker",
-	}
+	)
 
 	cmd := exec.CommandContext(ctx, "bwrap", args...)
 	cmd.Stderr = os.Stderr // Pass through stderr for worker logs
@@ -230,26 +249,30 @@ func (w *Worker) IsDead() bool {
 
 // WorkerPool manages a pool of bwrap worker processes.
 type WorkerPool struct {
-	size      int
-	workDir   string
-	workers   chan *Worker
-	mu        sync.Mutex
-	started   int
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closeOnce sync.Once
+	size         int
+	workDir      string
+	runtimeBinds []string // Additional bind mounts for runtime paths (Go, etc.)
+	workers      chan *Worker
+	mu           sync.Mutex
+	started      int
+	ctx          context.Context
+	cancel       context.CancelFunc
+	closeOnce    sync.Once
 }
 
 // NewWorkerPool creates a new worker pool with the specified size.
 // Workers are created lazily on demand.
-func NewWorkerPool(size int, workDir string) *WorkerPool {
+// extraBinds specifies additional writable paths to bind mount (e.g., for runtimes).
+func NewWorkerPool(size int, workDir string, extraBinds []string) *WorkerPool {
 	ctx, cancel := context.WithCancel(context.Background())
+
 	return &WorkerPool{
-		size:    size,
-		workDir: workDir,
-		workers: make(chan *Worker, size),
-		ctx:     ctx,
-		cancel:  cancel,
+		size:         size,
+		workDir:      workDir,
+		runtimeBinds: extraBinds,
+		workers:      make(chan *Worker, size),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
@@ -291,7 +314,7 @@ func (p *WorkerPool) Acquire() (*Worker, error) {
 
 // startNewWorker starts a new worker process.
 func (p *WorkerPool) startNewWorker() (*Worker, error) {
-	w, err := StartWorker(p.ctx, p.workDir)
+	w, err := StartWorker(p.ctx, p.workDir, p.runtimeBinds)
 	if err != nil {
 		// Decrement started count on failure
 		p.mu.Lock()

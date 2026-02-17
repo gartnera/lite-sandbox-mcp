@@ -3,7 +3,9 @@ package bash_sandboxed
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gartnera/lite-sandbox-mcp/config"
@@ -107,4 +109,147 @@ func TestOSSandboxWorkerPool(t *testing.T) {
 			t.Errorf("concurrent execute %d unexpected output: got %q, want %q", i, r.output, "test\n")
 		}
 	}
+}
+
+// TestOSSandboxGoRuntime tests that Go build, test, and install work in OS sandbox.
+func TestOSSandboxGoRuntime(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	s := NewSandbox()
+
+	// Enable OS sandbox and Go runtime
+	enabled := true
+	goEnabled := true
+	cfg := &config.Config{
+		OSSandbox: &enabled,
+		Runtimes: &config.RuntimesConfig{
+			Go: &config.GoConfig{
+				Enabled: &goEnabled,
+			},
+		},
+	}
+	s.UpdateConfig(cfg, tmpDir)
+	defer s.Close()
+
+	// Create a simple Go module
+	mainGo := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(mainGo, []byte(`package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("hello from sandbox")
+}
+
+func Add(a, b int) int {
+	return a + b
+}
+`), 0644); err != nil {
+		t.Fatalf("failed to write main.go: %v", err)
+	}
+
+	// Create a test file
+	mainTestGo := filepath.Join(tmpDir, "main_test.go")
+	if err := os.WriteFile(mainTestGo, []byte(`package main
+
+import "testing"
+
+func TestAdd(t *testing.T) {
+	result := Add(2, 3)
+	if result != 5 {
+		t.Errorf("Add(2, 3) = %d, want 5", result)
+	}
+}
+`), 0644); err != nil {
+		t.Fatalf("failed to write main_test.go: %v", err)
+	}
+
+	// Initialize go module
+	goMod := filepath.Join(tmpDir, "go.mod")
+	if err := os.WriteFile(goMod, []byte(`module example.com/test
+
+go 1.21
+`), 0644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+
+	// Test go build
+	t.Run("go build", func(t *testing.T) {
+		output, err := s.Execute(context.Background(), "go build -o testbin", tmpDir, []string{tmpDir})
+		if err != nil {
+			t.Fatalf("go build failed: %v, output: %s", err, output)
+		}
+
+		// Verify binary was created
+		binPath := filepath.Join(tmpDir, "testbin")
+		if _, err := os.Stat(binPath); os.IsNotExist(err) {
+			t.Error("expected binary to exist after go build")
+		}
+	})
+
+	// Test go test
+	t.Run("go test", func(t *testing.T) {
+		output, err := s.Execute(context.Background(), "go test -v", tmpDir, []string{tmpDir})
+		if err != nil {
+			t.Fatalf("go test failed: %v, output: %s", err, output)
+		}
+
+		// Check that test passed
+		if !contains(output, "PASS") {
+			t.Errorf("expected PASS in test output, got: %s", output)
+		}
+	})
+
+	// Test go install to custom GOBIN within tmpDir
+	t.Run("go install with custom GOBIN", func(t *testing.T) {
+		binDir := filepath.Join(tmpDir, "bin")
+		if err := os.MkdirAll(binDir, 0755); err != nil {
+			t.Fatalf("failed to create bin dir: %v", err)
+		}
+
+		cmd := "GOBIN=" + binDir + " go install"
+		output, err := s.Execute(context.Background(), cmd, tmpDir, []string{tmpDir})
+		if err != nil {
+			t.Fatalf("go install failed: %v, output: %s", err, output)
+		}
+
+		// Verify binary was installed
+		installedBin := filepath.Join(binDir, "test")
+		if _, err := os.Stat(installedBin); os.IsNotExist(err) {
+			t.Error("expected binary to exist after go install")
+		}
+	})
+
+	// Test go install to default GOPATH/bin (tests that GOPATH is writable)
+	t.Run("go install to default GOPATH", func(t *testing.T) {
+		// Get GOPATH from go env
+		cmd := exec.Command("go", "env", "GOPATH")
+		output, err := cmd.Output()
+		if err != nil {
+			t.Skipf("failed to get GOPATH: %v", err)
+		}
+		gopath := strings.TrimSpace(string(output))
+		if gopath == "" {
+			t.Skip("GOPATH is not set")
+		}
+
+		defaultBinPath := filepath.Join(gopath, "bin", "test")
+
+		// Remove the binary if it exists from a previous run
+		os.Remove(defaultBinPath)
+
+		// Install without specifying GOBIN (should use default GOPATH/bin)
+		output2, err := s.Execute(context.Background(), "go install", tmpDir, []string{tmpDir})
+		if err != nil {
+			t.Fatalf("go install to default GOPATH failed: %v, output: %s", err, output2)
+		}
+
+		// Verify binary was installed to GOPATH/bin
+		if _, err := os.Stat(defaultBinPath); os.IsNotExist(err) {
+			t.Errorf("expected binary to exist at %s after go install", defaultBinPath)
+		}
+
+		// Clean up
+		os.Remove(defaultBinPath)
+	})
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 
@@ -55,7 +56,8 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 		}
 		if newOSSandbox {
 			slog.Info("enabling OS sandbox", "workers", cfg.OSSandboxWorkersCount())
-			s.pool = os_sandbox.NewWorkerPool(cfg.OSSandboxWorkersCount(), workDir)
+			extraBinds := detectRuntimeBinds(cfg.Runtimes)
+			s.pool = os_sandbox.NewWorkerPool(cfg.OSSandboxWorkersCount(), workDir, extraBinds)
 		}
 		s.osSandbox = newOSSandbox
 	} else if newOSSandbox && s.pool != nil {
@@ -96,6 +98,50 @@ func (s *Sandbox) Close() error {
 		return s.pool.Close()
 	}
 	return nil
+}
+
+// detectRuntimeBinds detects paths needed by enabled runtimes and returns them
+// as a list of directories to bind mount as writable in the OS sandbox.
+func detectRuntimeBinds(runtimes *config.RuntimesConfig) []string {
+	if runtimes == nil {
+		return nil
+	}
+
+	var binds []string
+
+	// Detect Go paths if Go runtime is enabled
+	if runtimes.Go != nil && runtimes.Go.GoEnabled() {
+		goBinds := detectGoBinds()
+		binds = append(binds, goBinds...)
+	}
+
+	return binds
+}
+
+// detectGoBinds detects Go environment paths that need to be writable.
+// Returns GOPATH and GOCACHE (build cache) directories.
+func detectGoBinds() []string {
+	cmd := exec.Command("go", "env", "GOPATH", "GOCACHE")
+	output, err := cmd.Output()
+	if err != nil {
+		slog.Warn("failed to detect Go paths", "error", err)
+		return nil
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	var paths []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" && line != "off" {
+			paths = append(paths, line)
+		}
+	}
+
+	if len(paths) > 0 {
+		slog.Info("detected Go runtime paths", "paths", paths)
+	}
+
+	return paths
 }
 
 // ParseBash parses a command string as bash and returns the AST.

@@ -196,6 +196,7 @@ func TestWorkerIPCWithBwrap(t *testing.T) {
 	// Start worker with bwrap (same setup as StartWorker)
 	args := []string{
 		"--ro-bind", "/", "/",
+		"--tmpfs", "/tmp",
 		"--bind", tmpDir, tmpDir,
 		"--dev", "/dev",
 		"--proc", "/proc",
