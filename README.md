@@ -13,7 +13,7 @@ lite-sandbox-mcp install
 ```
 
 This automatically:
-1. Adds the MCP server to `~/.claude/.mcp.json`
+1. Adds the MCP server to `~/.claude.json` (user-scoped)
 2. Adds auto-allow permission to `~/.claude/settings.json`
 3. Adds usage directive to `~/.claude/CLAUDE.md`
 
@@ -26,7 +26,7 @@ If you prefer to configure manually or need a custom setup:
 
 #### 1. Add the MCP server
 
-Add this to `.mcp.json` in your project root (or `~/.claude/.mcp.json` for global):
+Add this to `.mcp.json` in your project root (project-scoped) or `~/.claude.json` under the `mcpServers` key (user-scoped/global):
 
 ```json
 {
@@ -49,7 +49,7 @@ Add this to `~/.claude/settings.json` so Claude Code never prompts for permissio
 {
   "permissions": {
     "allow": [
-      "MCP(lite-sandbox-mcp:bash_sandboxed)"
+      "mcp__lite-sandbox-mcp__bash_sandboxed"
     ]
   }
 }

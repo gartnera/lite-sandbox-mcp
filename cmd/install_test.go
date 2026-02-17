@@ -9,32 +9,36 @@ import (
 )
 
 func TestConfigureMCPServer(t *testing.T) {
-	// Create a temporary directory
 	tmpDir := t.TempDir()
+	claudeJsonPath := filepath.Join(tmpDir, ".claude.json")
 
 	// Test with non-existent file
-	err := configureMCPServer(tmpDir, "/usr/local/bin/lite-sandbox-mcp")
+	err := configureMCPServer(claudeJsonPath, "/usr/local/bin/lite-sandbox-mcp")
 	if err != nil {
 		t.Fatalf("configureMCPServer failed: %v", err)
 	}
 
 	// Read and verify the file
-	mcpPath := filepath.Join(tmpDir, ".mcp.json")
-	data, err := os.ReadFile(mcpPath)
+	data, err := os.ReadFile(claudeJsonPath)
 	if err != nil {
-		t.Fatalf("failed to read .mcp.json: %v", err)
+		t.Fatalf("failed to read .claude.json: %v", err)
 	}
 
-	var cfg mcpConfig
+	var cfg map[string]json.RawMessage
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("failed to parse .mcp.json: %v", err)
+		t.Fatalf("failed to parse .claude.json: %v", err)
 	}
 
-	if len(cfg.MCPServers) != 1 {
-		t.Fatalf("expected 1 server, got %d", len(cfg.MCPServers))
+	var mcpServers map[string]mcpServerConfig
+	if err := json.Unmarshal(cfg["mcpServers"], &mcpServers); err != nil {
+		t.Fatalf("failed to parse mcpServers: %v", err)
 	}
 
-	server, ok := cfg.MCPServers["lite-sandbox-mcp"]
+	if len(mcpServers) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(mcpServers))
+	}
+
+	server, ok := mcpServers["lite-sandbox-mcp"]
 	if !ok {
 		t.Fatal("lite-sandbox-mcp server not found")
 	}
@@ -48,24 +52,60 @@ func TestConfigureMCPServer(t *testing.T) {
 	}
 
 	// Test updating existing file
-	err = configureMCPServer(tmpDir, "/opt/lite-sandbox-mcp")
+	err = configureMCPServer(claudeJsonPath, "/opt/lite-sandbox-mcp")
 	if err != nil {
 		t.Fatalf("configureMCPServer failed on update: %v", err)
 	}
 
 	// Verify the update
-	data, err = os.ReadFile(mcpPath)
+	data, err = os.ReadFile(claudeJsonPath)
 	if err != nil {
-		t.Fatalf("failed to read .mcp.json: %v", err)
+		t.Fatalf("failed to read .claude.json: %v", err)
 	}
 
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("failed to parse .mcp.json: %v", err)
+		t.Fatalf("failed to parse .claude.json: %v", err)
 	}
 
-	server = cfg.MCPServers["lite-sandbox-mcp"]
+	if err := json.Unmarshal(cfg["mcpServers"], &mcpServers); err != nil {
+		t.Fatalf("failed to parse mcpServers: %v", err)
+	}
+
+	server = mcpServers["lite-sandbox-mcp"]
 	if server.Command != "/opt/lite-sandbox-mcp" {
 		t.Errorf("expected updated command /opt/lite-sandbox-mcp, got %s", server.Command)
+	}
+
+	// Test that existing keys in ~/.claude.json are preserved
+	existingContent := `{"someKey": "someValue", "numStartups": 5}`
+	if err := os.WriteFile(claudeJsonPath, []byte(existingContent), 0644); err != nil {
+		t.Fatalf("failed to write existing .claude.json: %v", err)
+	}
+
+	err = configureMCPServer(claudeJsonPath, "/usr/local/bin/lite-sandbox-mcp")
+	if err != nil {
+		t.Fatalf("configureMCPServer failed with existing content: %v", err)
+	}
+
+	data, err = os.ReadFile(claudeJsonPath)
+	if err != nil {
+		t.Fatalf("failed to read .claude.json: %v", err)
+	}
+
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse .claude.json: %v", err)
+	}
+
+	// Verify existing keys are preserved
+	if _, ok := cfg["someKey"]; !ok {
+		t.Error("existing key 'someKey' was lost")
+	}
+	if _, ok := cfg["numStartups"]; !ok {
+		t.Error("existing key 'numStartups' was lost")
+	}
+	// Verify mcpServers was added
+	if _, ok := cfg["mcpServers"]; !ok {
+		t.Error("mcpServers key was not added")
 	}
 }
 
@@ -94,7 +134,7 @@ func TestConfigurePermissions(t *testing.T) {
 		t.Fatal("permissions is nil")
 	}
 
-	expected := "MCP(lite-sandbox-mcp:bash_sandboxed)"
+	expected := "mcp__lite-sandbox-mcp__bash_sandboxed"
 	if !slices.Contains(cfg.Permissions.Allow, expected) {
 		t.Errorf("expected permission %s not found in %v", expected, cfg.Permissions.Allow)
 	}

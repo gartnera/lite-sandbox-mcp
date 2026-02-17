@@ -15,7 +15,7 @@ var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Automatically configure Claude Code to use lite-sandbox-mcp",
 	Long: `Automatically configures Claude Code by:
-1. Adding the MCP server to ~/.claude/.mcp.json
+1. Adding the MCP server to ~/.claude.json (user-scoped)
 2. Adding auto-allow permission to ~/.claude/settings.json
 3. Adding usage directive to ~/.claude/CLAUDE.md`,
 	RunE: runInstall,
@@ -48,11 +48,12 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to access ~/.claude directory: %w", err)
 	}
 
-	// 1. Configure MCP server
-	if err := configureMCPServer(claudeDir, binPath); err != nil {
+	// 1. Configure MCP server in ~/.claude.json (user-scoped)
+	claudeJsonPath := filepath.Join(homeDir, ".claude.json")
+	if err := configureMCPServer(claudeJsonPath, binPath); err != nil {
 		return fmt.Errorf("failed to configure MCP server: %w", err)
 	}
-	fmt.Println("✓ Added MCP server to ~/.claude/.mcp.json")
+	fmt.Println("✓ Added MCP server to ~/.claude.json")
 
 	// 2. Configure permissions
 	if err := configurePermissions(claudeDir); err != nil {
@@ -71,47 +72,54 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-type mcpConfig struct {
-	MCPServers map[string]mcpServerConfig `json:"mcpServers"`
-}
-
 type mcpServerConfig struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
 }
 
-func configureMCPServer(claudeDir, binPath string) error {
-	mcpPath := filepath.Join(claudeDir, ".mcp.json")
-
-	var cfg mcpConfig
-	data, err := os.ReadFile(mcpPath)
+func configureMCPServer(claudeJsonPath, binPath string) error {
+	// Read existing ~/.claude.json (preserving all other keys)
+	var cfg map[string]json.RawMessage
+	data, err := os.ReadFile(claudeJsonPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return err
 		}
 		// File doesn't exist, start with empty config
-		cfg.MCPServers = make(map[string]mcpServerConfig)
+		cfg = make(map[string]json.RawMessage)
 	} else {
 		if err := json.Unmarshal(data, &cfg); err != nil {
-			return fmt.Errorf("failed to parse existing .mcp.json: %w", err)
+			return fmt.Errorf("failed to parse existing ~/.claude.json: %w", err)
 		}
-		if cfg.MCPServers == nil {
-			cfg.MCPServers = make(map[string]mcpServerConfig)
+	}
+
+	// Parse existing mcpServers if present
+	mcpServers := make(map[string]mcpServerConfig)
+	if raw, ok := cfg["mcpServers"]; ok {
+		if err := json.Unmarshal(raw, &mcpServers); err != nil {
+			return fmt.Errorf("failed to parse mcpServers in ~/.claude.json: %w", err)
 		}
 	}
 
 	// Add or update the lite-sandbox-mcp server
-	cfg.MCPServers["lite-sandbox-mcp"] = mcpServerConfig{
+	mcpServers["lite-sandbox-mcp"] = mcpServerConfig{
 		Command: binPath,
 		Args:    []string{"serve"},
 	}
+
+	// Marshal mcpServers back into the config
+	mcpServersRaw, err := json.Marshal(mcpServers)
+	if err != nil {
+		return err
+	}
+	cfg["mcpServers"] = mcpServersRaw
 
 	// Write back
 	data, err = json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(mcpPath, data, 0644)
+	return os.WriteFile(claudeJsonPath, data, 0644)
 }
 
 type settingsConfig struct {
@@ -144,7 +152,7 @@ func configurePermissions(claudeDir string) error {
 	}
 
 	// Add the permission if not already present
-	permission := "MCP(lite-sandbox-mcp:bash_sandboxed)"
+	permission := "mcp__lite-sandbox-mcp__bash_sandboxed"
 	if !slices.Contains(cfg.Permissions.Allow, permission) {
 		cfg.Permissions.Allow = append(cfg.Permissions.Allow, permission)
 	}
