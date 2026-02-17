@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/gartnera/lite-sandbox-mcp/config"
+	"github.com/gartnera/lite-sandbox/config"
 )
 
 var configCmd = &cobra.Command{

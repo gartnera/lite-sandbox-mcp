@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gartnera/lite-sandbox-mcp/config"
+	"github.com/gartnera/lite-sandbox/config"
 )
 
 func TestParseBash_Valid(t *testing.T) {

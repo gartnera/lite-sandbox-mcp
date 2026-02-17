@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gartnera/lite-sandbox-mcp/config"
+	"github.com/gartnera/lite-sandbox/config"
 )
 
 // TestValidate_AllowedGitSubcommands tests commands allowed with default config

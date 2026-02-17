@@ -1,6 +1,6 @@
 package bash_sandboxed
 
-import "github.com/gartnera/lite-sandbox-mcp/config"
+import "github.com/gartnera/lite-sandbox/config"
 
 // newTestSandbox returns a Sandbox with no extra commands for use in tests.
 // By default, git permissions use defaults (local_read=true, local_write=true,

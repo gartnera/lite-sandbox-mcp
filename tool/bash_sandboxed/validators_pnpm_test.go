@@ -3,7 +3,7 @@ package bash_sandboxed
 import (
 	"testing"
 
-	"github.com/gartnera/lite-sandbox-mcp/config"
+	"github.com/gartnera/lite-sandbox/config"
 	"mvdan.cc/sh/v3/syntax"
 )
 

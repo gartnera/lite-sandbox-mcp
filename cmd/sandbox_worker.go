@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/gartnera/lite-sandbox-mcp/os_sandbox"
+	"github.com/gartnera/lite-sandbox/os_sandbox"
 	"github.com/spf13/cobra"
 )
 

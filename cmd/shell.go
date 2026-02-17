@@ -13,9 +13,9 @@ import (
 	"github.com/spf13/cobra"
 	"mvdan.cc/sh/v3/syntax"
 
-	"github.com/gartnera/lite-sandbox-mcp/config"
-	"github.com/gartnera/lite-sandbox-mcp/internal/imds"
-	bash_sandboxed "github.com/gartnera/lite-sandbox-mcp/tool/bash_sandboxed"
+	"github.com/gartnera/lite-sandbox/config"
+	"github.com/gartnera/lite-sandbox/internal/imds"
+	bash_sandboxed "github.com/gartnera/lite-sandbox/tool/bash_sandboxed"
 )
 
 var shellCmd = &cobra.Command{

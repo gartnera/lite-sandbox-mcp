@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gartnera/lite-sandbox-mcp/config"
+	"github.com/gartnera/lite-sandbox/config"
 )
 
 // TestOSSandboxBasicExecution tests that OS sandbox can execute basic commands.

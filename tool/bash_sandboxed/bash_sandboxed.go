@@ -11,8 +11,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gartnera/lite-sandbox-mcp/config"
-	"github.com/gartnera/lite-sandbox-mcp/os_sandbox"
+	"github.com/gartnera/lite-sandbox/config"
+	"github.com/gartnera/lite-sandbox/os_sandbox"
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
