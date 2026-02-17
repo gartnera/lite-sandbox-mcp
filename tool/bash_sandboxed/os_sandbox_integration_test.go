@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -52,9 +53,14 @@ func TestOSSandboxFileIsolation(t *testing.T) {
 	defer s.Close()
 
 	// Try to write outside workdir - should fail
-	output, err := s.Execute(context.Background(), "touch /root/testfile", tmpDir, []string{tmpDir}, []string{tmpDir})
+	// Use /usr/testfile on macOS, /root/testfile on Linux
+	restrictedPath := "/root/testfile"
+	if runtime.GOOS == "darwin" {
+		restrictedPath = "/usr/testfile"
+	}
+	output, err := s.Execute(context.Background(), "touch "+restrictedPath, tmpDir, []string{tmpDir}, []string{tmpDir})
 	if err == nil {
-		t.Errorf("expected error when writing to /root, got success. output: %s", output)
+		t.Errorf("expected error when writing to %s, got success. output: %s", restrictedPath, output)
 	}
 
 	// Try to write inside workdir - should succeed
