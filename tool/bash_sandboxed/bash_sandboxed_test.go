@@ -243,7 +243,6 @@ func TestValidate_BlockedCommands(t *testing.T) {
 		{"xargs with blocked command", "echo hello | xargs python", `command "python" is not allowed`},
 
 		// Text processing with write capability
-		{"awk", "awk '{print}' file", `command "awk" is not allowed`},
 		{"tee", "echo hello | tee file", `command "tee" is not allowed`},
 		{"csplit", "csplit file /pattern/", `command "csplit" is not allowed`},
 

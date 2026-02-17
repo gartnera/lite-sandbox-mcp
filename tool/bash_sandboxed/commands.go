@@ -84,9 +84,11 @@ var allowedCommands = map[string]bool{
 	"hexdump": true,
 	"xxd":     true,
 
-	// JSON/structured data (stdin/stdout processors)
-	"jq": true,
-	"yq": true,
+	// JSON/structured data and text processing (stdin/stdout processors)
+	"jq":  true,
+	"yq":  true,
+	// awk is executed via goawk with system() and file-writes disabled.
+	"awk": true,
 
 	// Shell builtins (non-destructive, no escape capability)
 	"test":     true,
@@ -203,6 +205,7 @@ var writeCommands = map[string]bool{
 // validator here to block those flags while still allowing the command itself.
 // Validators receive the *Sandbox so they can access config (e.g., runtimes, git).
 var commandArgValidators = map[string]func(s *Sandbox, args []*syntax.Word) error{
+	"awk":   validateAwkArgs,
 	"find":  validateFindArgs,
 	"tar":   validateTarArgs,
 	"unzip": validateUnzipArgs,

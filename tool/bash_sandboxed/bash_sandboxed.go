@@ -396,12 +396,18 @@ func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir
 		}),
 	}
 
-	// If OS sandbox enabled, use custom ExecHandler to delegate to single worker.
-	if useOSSandbox {
-		opts = append(opts, interp.ExecHandler(func(ctx context.Context, args []string) error {
+	// Always register an ExecHandler so we can intercept awk and run it via
+	// goawk (which disables system() and file writes). Other commands are
+	// forwarded to the worker (OS sandbox) or the default handler.
+	opts = append(opts, interp.ExecHandler(func(ctx context.Context, args []string) error {
+		if len(args) > 0 && args[0] == "awk" {
+			return executeAwk(ctx, args)
+		}
+		if useOSSandbox {
 			return s.execInWorker(ctx, args)
-		}))
-	}
+		}
+		return interp.DefaultExecHandler(-1)(ctx, args)
+	}))
 
 	runner, err := interp.New(opts...)
 	if err != nil {
