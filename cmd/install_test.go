@@ -13,7 +13,7 @@ func TestConfigureMCPServer(t *testing.T) {
 	claudeJsonPath := filepath.Join(tmpDir, ".claude.json")
 
 	// Test with non-existent file
-	err := configureMCPServer(claudeJsonPath, "/usr/local/bin/lite-sandbox-mcp")
+	err := configureMCPServer(claudeJsonPath, "/usr/local/bin/lite-sandbox")
 	if err != nil {
 		t.Fatalf("configureMCPServer failed: %v", err)
 	}
@@ -38,21 +38,21 @@ func TestConfigureMCPServer(t *testing.T) {
 		t.Fatalf("expected 1 server, got %d", len(mcpServers))
 	}
 
-	server, ok := mcpServers["lite-sandbox-mcp"]
+	server, ok := mcpServers["lite-sandbox"]
 	if !ok {
-		t.Fatal("lite-sandbox-mcp server not found")
+		t.Fatal("lite-sandbox server not found")
 	}
 
-	if server.Command != "/usr/local/bin/lite-sandbox-mcp" {
-		t.Errorf("expected command /usr/local/bin/lite-sandbox-mcp, got %s", server.Command)
+	if server.Command != "/usr/local/bin/lite-sandbox" {
+		t.Errorf("expected command /usr/local/bin/lite-sandbox, got %s", server.Command)
 	}
 
-	if len(server.Args) != 1 || server.Args[0] != "serve" {
+	if len(server.Args) != 1 || server.Args[0] != "serve-mcp" {
 		t.Errorf("expected args [serve], got %v", server.Args)
 	}
 
 	// Test updating existing file
-	err = configureMCPServer(claudeJsonPath, "/opt/lite-sandbox-mcp")
+	err = configureMCPServer(claudeJsonPath, "/opt/lite-sandbox")
 	if err != nil {
 		t.Fatalf("configureMCPServer failed on update: %v", err)
 	}
@@ -71,9 +71,9 @@ func TestConfigureMCPServer(t *testing.T) {
 		t.Fatalf("failed to parse mcpServers: %v", err)
 	}
 
-	server = mcpServers["lite-sandbox-mcp"]
-	if server.Command != "/opt/lite-sandbox-mcp" {
-		t.Errorf("expected updated command /opt/lite-sandbox-mcp, got %s", server.Command)
+	server = mcpServers["lite-sandbox"]
+	if server.Command != "/opt/lite-sandbox" {
+		t.Errorf("expected updated command /opt/lite-sandbox, got %s", server.Command)
 	}
 
 	// Test that existing keys in ~/.claude.json are preserved
@@ -82,7 +82,7 @@ func TestConfigureMCPServer(t *testing.T) {
 		t.Fatalf("failed to write existing .claude.json: %v", err)
 	}
 
-	err = configureMCPServer(claudeJsonPath, "/usr/local/bin/lite-sandbox-mcp")
+	err = configureMCPServer(claudeJsonPath, "/usr/local/bin/lite-sandbox")
 	if err != nil {
 		t.Fatalf("configureMCPServer failed with existing content: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestConfigurePermissions(t *testing.T) {
 		t.Fatal("permissions is nil")
 	}
 
-	expected := "mcp__lite-sandbox-mcp__bash_sandboxed"
+	expected := "mcp__lite-sandbox__bash"
 	if !slices.Contains(cfg.Permissions.Allow, expected) {
 		t.Errorf("expected permission %s not found in %v", expected, cfg.Permissions.Allow)
 	}
@@ -182,7 +182,7 @@ func TestConfigureCLAUDEMD(t *testing.T) {
 	}
 
 	content := string(data)
-	expectedDirective := "ALWAYS use the mcp__lite-sandbox-mcp__bash_sandboxed tool"
+	expectedDirective := "ALWAYS use the mcp__lite-sandbox__bash tool"
 	if !contains(content, expectedDirective) {
 		t.Errorf("expected CLAUDE.md to contain %q, got:\n%s", expectedDirective, content)
 	}

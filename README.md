@@ -1,6 +1,6 @@
 # lite-sandbox-mcp
 
-An MCP (Model Context Protocol) server that provides a `bash_sandboxed` tool as a replacement for basic shell access in AI coding agents. The goal is to let agents run shell commands freely without per-command permission prompts, while enforcing safety through static analysis and runtime validation — commands are parsed into an AST and validated against a whitelist, then executed via a shell interpreter with runtime path validation that catches variable expansion bypasses.
+An MCP (Model Context Protocol) server that provides a `bash` tool as a replacement for basic shell access in AI coding agents. The goal is to let agents run shell commands freely without per-command permission prompts, while enforcing safety through static analysis and runtime validation — commands are parsed into an AST and validated against a whitelist, then executed via a shell interpreter with runtime path validation that catches variable expansion bypasses.
 
 ## Configuring with Claude Code
 
@@ -9,7 +9,7 @@ An MCP (Model Context Protocol) server that provides a `bash_sandboxed` tool as 
 The easiest way to configure Claude Code is to use the built-in install command:
 
 ```bash
-lite-sandbox-mcp install
+lite-sandbox install
 ```
 
 This automatically:
@@ -31,15 +31,15 @@ Add this to `.mcp.json` in your project root (project-scoped) or `~/.claude.json
 ```json
 {
   "mcpServers": {
-    "lite-sandbox-mcp": {
-      "command": "/path/to/lite-sandbox-mcp",
-      "args": ["serve"]
+    "lite-sandbox": {
+      "command": "/path/to/lite-sandbox",
+      "args": ["serve-mcp"]
     }
   }
 }
 ```
 
-Replace `/path/to/lite-sandbox-mcp` with the actual path to the built binary.
+Replace `/path/to/lite-sandbox` with the actual path to the built binary.
 
 #### 2. Auto-allow the tool
 
@@ -49,7 +49,7 @@ Add this to `~/.claude/settings.json` so Claude Code never prompts for permissio
 {
   "permissions": {
     "allow": [
-      "mcp__lite-sandbox-mcp__bash_sandboxed"
+      "mcp__lite-sandbox__bash"
     ]
   }
 }
@@ -60,10 +60,10 @@ Add this to `~/.claude/settings.json` so Claude Code never prompts for permissio
 Add the following to your `~/.claude/CLAUDE.md` (global) or project-level `CLAUDE.md`:
 
 ```markdown
-ALWAYS use the mcp__lite-sandbox-mcp__bash_sandboxed tool for running shell commands instead of the built-in Bash tool. The sandboxed tool is pre-approved and requires no permission prompts. Only fall back to Bash if the sandboxed tool cannot handle the command.
+ALWAYS use the mcp__lite-sandbox__bash tool for running shell commands instead of the built-in Bash tool. The sandboxed tool is pre-approved and requires no permission prompts. Only fall back to Bash if the sandboxed tool cannot handle the command.
 ```
 
-> **Note**: The tool name follows the pattern `mcp__<server-name>__<tool-name>`. If you named the server differently in your MCP config (e.g. `lite-sandbox`), adjust the tool name accordingly (e.g. `mcp__lite-sandbox__bash_sandboxed`).
+> **Note**: The tool name follows the pattern `mcp__<server-name>__<tool-name>`. If you named the server differently in your MCP config, adjust the tool name accordingly.
 
 </details>
 
@@ -71,8 +71,8 @@ ALWAYS use the mcp__lite-sandbox-mcp__bash_sandboxed tool for running shell comm
 
 Extra commands can be allowed via a config file at the platform-appropriate location:
 
-- **Linux**: `~/.config/lite-sandbox-mcp/config.yaml`
-- **macOS**: `~/Library/Application Support/lite-sandbox-mcp/config.yaml`
+- **Linux**: `~/.config/lite-sandbox/config.yaml`
+- **macOS**: `~/Library/Application Support/lite-sandbox/config.yaml`
 
 ```yaml
 extra_commands:
@@ -86,19 +86,19 @@ The config file is automatically reloaded when changed — no server restart nee
 
 ```bash
 # Print config file path
-lite-sandbox-mcp config path
+lite-sandbox config path
 
 # Show current configuration
-lite-sandbox-mcp config show
+lite-sandbox config show
 
 # Add extra allowed commands
-lite-sandbox-mcp config extra-commands add curl wget
+lite-sandbox config extra-commands add curl wget
 
 # List extra allowed commands
-lite-sandbox-mcp config extra-commands list
+lite-sandbox config extra-commands list
 
 # Remove extra allowed commands
-lite-sandbox-mcp config extra-commands remove curl
+lite-sandbox config extra-commands remove curl
 ```
 
 ## Git Support
@@ -117,7 +117,7 @@ Remote write operations (`git push`) are disabled by default since they affect s
 
 ```bash
 # Show current git configuration
-lite-sandbox-mcp config show
+lite-sandbox config show
 
 # Edit config file to enable git push
 # Add 'remote_write: true' under the git section
@@ -163,13 +163,13 @@ Enable pnpm via CLI:
 
 ```bash
 # Enable pnpm commands
-lite-sandbox-mcp config runtimes pnpm enable
+lite-sandbox config runtimes pnpm enable
 
 # Enable with publish permission
-lite-sandbox-mcp config runtimes pnpm enable --with-publish
+lite-sandbox config runtimes pnpm enable --with-publish
 
 # Show current pnpm configuration
-lite-sandbox-mcp config runtimes pnpm show
+lite-sandbox config runtimes pnpm show
 ```
 
 pnpm runtime commands enable safe package management workflows:
@@ -223,7 +223,7 @@ An optional OS-level sandbox using [bubblewrap](https://github.com/containers/bu
 
 **Configuration:**
 
-Enable via config file (`~/.config/lite-sandbox-mcp/config.yaml`):
+Enable via config file (`~/.config/lite-sandbox/config.yaml`):
 
 ```yaml
 os_sandbox: true          # Enable OS-level sandboxing (default: false)
@@ -234,10 +234,10 @@ Or via CLI:
 
 ```bash
 # Enable OS sandbox
-lite-sandbox-mcp config os-sandbox enable
+lite-sandbox config os-sandbox enable
 
 # Show current status
-lite-sandbox-mcp config os-sandbox show
+lite-sandbox config os-sandbox show
 ```
 
 **Requirements:**
@@ -286,8 +286,8 @@ This is a lightweight, best-effort sandbox based on static analysis. It is **not
 ## Building
 
 ```bash
-go build -o lite-sandbox-mcp
-./lite-sandbox-mcp install  # Automatically configure Claude Code
+go build -o lite-sandbox
+./lite-sandbox install  # Automatically configure Claude Code
 ```
 
 ## Development
@@ -307,4 +307,4 @@ uv run pytest -v          # Run all e2e tests
 uv run pytest -v -k test_go_project_workflow  # Run specific test
 ```
 
-**Showcase test**: `e2e/claude/test_go_runtime_e2e.py` demonstrates a complete Go development workflow — module initialization, writing code and tests, running `go test`, and creating a git commit — all using only the `bash_sandboxed` MCP tool with no built-in Bash calls. This test shows how the sandbox enables safe, autonomous development workflows for AI coding agents.
+**Showcase test**: `e2e/claude/test_go_runtime_e2e.py` demonstrates a complete Go development workflow — module initialization, writing code and tests, running `go test`, and creating a git commit — all using only the `bash` MCP tool with no built-in Bash calls. This test shows how the sandbox enables safe, autonomous development workflows for AI coding agents.

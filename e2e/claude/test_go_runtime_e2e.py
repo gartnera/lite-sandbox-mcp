@@ -10,27 +10,27 @@ from test_sandbox_e2e import assert_used_sandbox_tool, run_prompt
 @pytest.fixture
 def go_runtime_agent_options(tmp_path) -> ClaudeAgentOptions:
     """ClaudeAgentOptions with Go runtime enabled via custom config."""
-    binary = PROJECT_ROOT / "lite-sandbox-mcp"
+    binary = PROJECT_ROOT / "lite-sandbox"
     config_path = PROJECT_ROOT / "e2e" / "claude" / "config_go_runtime.yaml"
 
     return ClaudeAgentOptions(
         mcp_servers={
             "lite-sandbox": {
                 "command": str(binary),
-                "args": ["serve"],
+                "args": ["serve-mcp"],
                 "env": {"LITE_SANDBOX_CONFIG": str(config_path)},
             },
         },
         system_prompt=(
-            "You have access to a bash_sandboxed MCP tool for running shell commands. "
+            "You have access to a bash MCP tool for running shell commands. "
             "You also have access to Read, Write, and Edit tools for file operations. "
-            "ALWAYS use the mcp__lite-sandbox__bash_sandboxed tool for running commands "
+            "ALWAYS use the mcp__lite-sandbox__bash tool for running commands "
             "(like go, git) instead of the built-in Bash tool. "
             "ALWAYS use the Write tool to create new files instead of shell commands. "
             "The sandboxed tool is pre-approved and requires no permission prompts."
         ),
         allowed_tools=[
-            "mcp__lite-sandbox__bash_sandboxed",
+            "mcp__lite-sandbox__bash",
             "Read",
             "Write",
             "Edit",
@@ -71,7 +71,7 @@ Please complete the following Go project workflow:
 6. Run 'git add .' to stage all files
 7. Run 'git commit -m "initial commit"' to create the first commit
 
-Use the Write tool to create files and the bash_sandboxed tool for commands.
+Use the Write tool to create files and the bash tool for commands.
 Show me the results of the go test and git commit commands.
 """
 
@@ -84,7 +84,7 @@ Show me the results of the go test and git commit commands.
     tool_names = [tc.name for tc in response["tool_calls"]]
     for name in tool_names:
         assert name in [
-            "mcp__lite-sandbox__bash_sandboxed",
+            "mcp__lite-sandbox__bash",
             "Read",
             "Write",
             "Edit",

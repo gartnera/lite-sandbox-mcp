@@ -21,6 +21,6 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build
-        run: go build -o lite-sandbox-mcp
+        run: go build -o lite-sandbox
       - name: Test
         run: go test ./...

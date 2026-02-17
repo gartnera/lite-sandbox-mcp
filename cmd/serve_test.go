@@ -42,7 +42,7 @@ func TestBashSandboxedTool_Success(t *testing.T) {
 
 	result, err := c.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "bash_sandboxed",
+			Name:      "bash",
 			Arguments: map[string]any{"command": "echo hello"},
 		},
 	})
@@ -70,7 +70,7 @@ func TestBashSandboxedTool_InvalidSyntax(t *testing.T) {
 
 	result, err := c.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "bash_sandboxed",
+			Name:      "bash",
 			Arguments: map[string]any{"command": "echo 'hello"},
 		},
 	})
@@ -88,7 +88,7 @@ func TestBashSandboxedTool_MissingCommand(t *testing.T) {
 
 	result, err := c.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "bash_sandboxed",
+			Name:      "bash",
 			Arguments: map[string]any{},
 		},
 	})
@@ -111,8 +111,8 @@ func TestListTools(t *testing.T) {
 	if len(tools.Tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools.Tools))
 	}
-	if tools.Tools[0].Name != "bash_sandboxed" {
-		t.Fatalf("expected tool name 'bash_sandboxed', got %q", tools.Tools[0].Name)
+	if tools.Tools[0].Name != "bash" {
+		t.Fatalf("expected tool name 'bash', got %q", tools.Tools[0].Name)
 	}
 }
 
@@ -123,7 +123,7 @@ func TestBashSandboxedTool_Timeout(t *testing.T) {
 	// Test with a command that takes longer than the timeout
 	result, err := c.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "bash_sandboxed",
+			Name: "bash",
 			Arguments: map[string]any{
 				"command": "sleep 10",
 				"timeout": 100.0, // 100ms timeout
@@ -153,7 +153,7 @@ func TestBashSandboxedTool_CompletesBeforeTimeout(t *testing.T) {
 	// Test with a command that completes before the timeout
 	result, err := c.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "bash_sandboxed",
+			Name: "bash",
 			Arguments: map[string]any{
 				"command": "echo quick",
 				"timeout": 5000.0, // 5 second timeout, plenty of time
@@ -185,7 +185,7 @@ func TestBashSandboxedTool_DefaultTimeout(t *testing.T) {
 	// Test without specifying timeout (should use default of 120000ms)
 	result, err := c.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "bash_sandboxed",
+			Name:      "bash",
 			Arguments: map[string]any{"command": "echo default"},
 		},
 	})
@@ -214,7 +214,7 @@ func TestBashSandboxedTool_TimeoutExceedsMaximum(t *testing.T) {
 	// Test with timeout exceeding maximum (600000ms)
 	result, err := c.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "bash_sandboxed",
+			Name: "bash",
 			Arguments: map[string]any{
 				"command": "echo test",
 				"timeout": 700000.0, // Exceeds max
@@ -243,7 +243,7 @@ func TestBashSandboxedTool_NegativeTimeout(t *testing.T) {
 	// Test with negative timeout
 	result, err := c.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "bash_sandboxed",
+			Name: "bash",
 			Arguments: map[string]any{
 				"command": "echo test",
 				"timeout": -1000.0,

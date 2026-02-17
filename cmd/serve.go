@@ -16,7 +16,7 @@ import (
 )
 
 var serveCmd = &cobra.Command{
-	Use:   "serve",
+	Use:   "serve-mcp",
 	Short: "Start the MCP server over stdio",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runServe()
@@ -35,12 +35,12 @@ func NewMCPServer() *server.MCPServer {
 
 func newMCPServer(sandbox *bash_sandboxed.Sandbox) *server.MCPServer {
 	s := server.NewMCPServer(
-		"lite-sandbox-mcp",
+		"lite-sandbox",
 		"0.1.0",
 	)
 
 	bashTool := mcp.NewTool(
-		"bash_sandboxed",
+		"bash",
 		mcp.WithDescription("Execute a bash command in a lightweight sandbox. The command is parsed and validated before execution."),
 		mcp.WithString("command",
 			mcp.Description("The bash command to execute"),

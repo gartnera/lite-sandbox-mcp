@@ -1,4 +1,4 @@
-"""E2E tests that verify Claude can use the bash_sandboxed MCP tool."""
+"""E2E tests that verify Claude can use the bash MCP tool."""
 
 import pytest
 from claude_agent_sdk import (
@@ -50,8 +50,8 @@ def assert_used_sandbox_tool(response: dict):
     """Assert that the sandbox MCP tool was actually invoked."""
     tool_names = [tc.name for tc in response["tool_calls"]]
     assert any(
-        "bash_sandboxed" in name for name in tool_names
-    ), f"Expected bash_sandboxed tool call, got: {tool_names}"
+        "bash" in name for name in tool_names
+    ), f"Expected bash tool call, got: {tool_names}"
 
 
 @pytest.mark.asyncio

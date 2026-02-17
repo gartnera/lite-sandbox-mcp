@@ -43,7 +43,7 @@ type Worker struct {
 }
 
 // StartWorker starts a new bwrap sandbox worker process.
-// The worker runs the "lite-sandbox-mcp sandbox-worker" subcommand inside bwrap.
+// The worker runs the "lite-sandbox sandbox-worker" subcommand inside bwrap.
 // extraBinds specifies additional writable paths to bind mount (e.g., for runtimes).
 func StartWorker(ctx context.Context, workDir string, extraBinds []string) (*Worker, error) {
 	// Find our own binary path to pass to bwrap
@@ -54,16 +54,16 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string) (*Wor
 
 	// If running from a test binary, try to find the actual binary
 	baseName := filepath.Base(self)
-	if baseName != "lite-sandbox-mcp" && (filepath.Ext(self) == ".test" || filepath.Ext(baseName) == ".test") {
-		// Try to find lite-sandbox-mcp in current working directory
+	if baseName != "lite-sandbox" && (filepath.Ext(self) == ".test" || filepath.Ext(baseName) == ".test") {
+		// Try to find lite-sandbox in current working directory
 		cwd, err := os.Getwd()
 		if err == nil {
-			candidatePath := filepath.Join(cwd, "lite-sandbox-mcp")
+			candidatePath := filepath.Join(cwd, "lite-sandbox")
 			if _, err := os.Stat(candidatePath); err == nil {
 				self = candidatePath
 			} else {
 				// Try two levels up (for tests in tool/bash_sandboxed)
-				candidatePath = filepath.Join(cwd, "../..", "lite-sandbox-mcp")
+				candidatePath = filepath.Join(cwd, "../..", "lite-sandbox")
 				if absPath, err := filepath.Abs(candidatePath); err == nil {
 					if _, err := os.Stat(absPath); err == nil {
 						self = absPath

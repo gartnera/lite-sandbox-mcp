@@ -1,5 +1,5 @@
 .claude
-lite-sandbox-mcp
+lite-sandbox
 __pycache__/
 .venv/
 .pytest_cache/

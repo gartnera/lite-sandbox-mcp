@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const appName = "lite-sandbox-mcp"
+const appName = "lite-sandbox"
 
 // GitConfig controls granular git permission levels.
 type GitConfig struct {

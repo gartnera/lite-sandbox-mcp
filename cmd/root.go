@@ -8,7 +8,7 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "lite-sandbox-mcp",
+	Use:   "lite-sandbox",
 	Short: "A lightweight sandboxed MCP server",
 }
 

@@ -5,17 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test Commands
 
 ```bash
-go build -o lite-sandbox-mcp    # Build binary
+go build -o lite-sandbox        # Build binary
 go test ./...                    # Run all tests
 go test -v ./tool/...            # Run tool package tests with verbose output
 go test -run TestValidate ./tool # Run a specific test
-go run . serve                   # Start MCP server over stdio
+go run . serve-mcp               # Start MCP server over stdio
 cd e2e/claude && uv run pytest -v # Run e2e tests (Claude Agent SDK)
 ```
 
 ## Architecture
 
-This is an MCP (Model Context Protocol) server that exposes a single `bash_sandboxed` tool for executing bash commands with strict security validation.
+This is an MCP (Model Context Protocol) server that exposes a single `bash` tool for executing bash commands with strict security validation.
 
 **Command flow:** MCP request → `cmd/serve.go:handleBashSandboxed()` → `tool.BashSandboxed()` which does: parse bash AST → validate against whitelist → execute via `bash -c`.
 

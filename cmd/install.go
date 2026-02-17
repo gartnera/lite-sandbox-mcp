@@ -13,7 +13,7 @@ import (
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Automatically configure Claude Code to use lite-sandbox-mcp",
+	Short: "Automatically configure Claude Code to use lite-sandbox",
 	Long: `Automatically configures Claude Code by:
 1. Adding the MCP server to ~/.claude.json (user-scoped)
 2. Adding auto-allow permission to ~/.claude/settings.json
@@ -101,10 +101,10 @@ func configureMCPServer(claudeJsonPath, binPath string) error {
 		}
 	}
 
-	// Add or update the lite-sandbox-mcp server
-	mcpServers["lite-sandbox-mcp"] = mcpServerConfig{
+	// Add or update the lite-sandbox server
+	mcpServers["lite-sandbox"] = mcpServerConfig{
 		Command: binPath,
-		Args:    []string{"serve"},
+		Args:    []string{"serve-mcp"},
 	}
 
 	// Marshal mcpServers back into the config
@@ -152,7 +152,7 @@ func configurePermissions(claudeDir string) error {
 	}
 
 	// Add the permission if not already present
-	permission := "mcp__lite-sandbox-mcp__bash_sandboxed"
+	permission := "mcp__lite-sandbox__bash"
 	if !slices.Contains(cfg.Permissions.Allow, permission) {
 		cfg.Permissions.Allow = append(cfg.Permissions.Allow, permission)
 	}
@@ -168,7 +168,7 @@ func configurePermissions(claudeDir string) error {
 func configureCLAUDEMD(claudeDir string) error {
 	claudeMDPath := filepath.Join(claudeDir, "CLAUDE.md")
 
-	directive := `ALWAYS use the mcp__lite-sandbox-mcp__bash_sandboxed tool for running shell commands instead of the built-in Bash tool. The sandboxed tool is pre-approved and requires no permission prompts. Only fall back to Bash if the sandboxed tool cannot handle the command.`
+	directive := `ALWAYS use the mcp__lite-sandbox__bash tool for running shell commands instead of the built-in Bash tool. The sandboxed tool is pre-approved and requires no permission prompts. Only fall back to Bash if the sandboxed tool cannot handle the command.`
 
 	// Check if the file exists and already contains the directive
 	data, err := os.ReadFile(claudeMDPath)
