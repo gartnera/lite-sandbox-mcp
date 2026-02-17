@@ -225,19 +225,26 @@ func generateSBPLProfile(workDir string, extraBinds []string, blockAWSCredential
 	var sb strings.Builder
 
 	sb.WriteString("(version 1)\n")
-	sb.WriteString("(deny default)\n")
+	sb.WriteString("(allow default)\n")
 
-	// Deny access to credential directories (must come before allow rules)
+	// Get home directory for credential blocking
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		// Fall back to not blocking if we can't get home dir
+		slog.Warn("failed to get home directory for SBPL profile", "error", err)
+		return sb.String()
+	}
+
+	// Deny access to credential directories (must come after allow default)
 	// Always block ~/.ssh
-	sb.WriteString("(deny file-read* (regex #\"^/Users/[^/]+/\\.ssh/\"))\n")
+	sshDir := filepath.Join(homeDir, ".ssh")
+	sb.WriteString(fmt.Sprintf("(deny file-read* (subpath \"%s\"))\n", sshDir))
 
 	// Conditionally block ~/.aws
 	if blockAWSCredentials {
-		sb.WriteString("(deny file-read* (regex #\"^/Users/[^/]+/\\.aws/\"))\n")
+		awsDir := filepath.Join(homeDir, ".aws")
+		sb.WriteString(fmt.Sprintf("(deny file-read* (subpath \"%s\"))\n", awsDir))
 	}
-
-	// Allow read access to entire filesystem (except denied paths above)
-	sb.WriteString("(allow file-read* (subpath \"/\"))\n")
 
 	// Allow write access to workDir and its resolved path
 	sb.WriteString(fmt.Sprintf("(allow file-write* (subpath \"%s\"))\n", workDir))
