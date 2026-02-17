@@ -11,11 +11,13 @@ func TestValidate_BlockedFindFlags(t *testing.T) {
 		command string
 		errMsg  string
 	}{
-		{"find -exec rm", `find . -exec rm {} \;`, `find flag "-exec" is not allowed`},
+		// -exec with a non-whitelisted command is blocked via recursive validation
+		{"find -exec python", `find . -exec python {} \;`, `command "python" is not allowed`},
+		{"find -execdir python", `find . -execdir python {} +`, `command "python" is not allowed`},
+		{"find -ok python", `find . -ok python {} \;`, `command "python" is not allowed`},
+		{"find -exec empty", `find . -exec \;`, `find -exec has no command to execute`},
+		// File-write flags remain unconditionally blocked
 		{"find -delete", `find . -delete`, `find flag "-delete" is not allowed`},
-		{"find -execdir python", `find . -execdir python {} +`, `find flag "-execdir" is not allowed`},
-		{"find -ok", `find . -ok rm {} \;`, `find flag "-ok" is not allowed`},
-		{"find -okdir", `find . -okdir rm {} \;`, `find flag "-okdir" is not allowed`},
 		{"find -fls", `find . -fls /tmp/out`, `find flag "-fls" is not allowed`},
 		{"find -fprint", `find . -fprint /tmp/out`, `find flag "-fprint" is not allowed`},
 		{"find -fprint0", `find . -fprint0 /tmp/out`, `find flag "-fprint0" is not allowed`},
@@ -49,6 +51,12 @@ func TestValidate_AllowedFindFlags(t *testing.T) {
 		{"find -iname", "find . -iname '*.TXT'"},
 		{"find -size", "find . -size +1M"},
 		{"find -mtime", "find . -mtime -7"},
+		// -exec with whitelisted commands is allowed
+		{"find -exec grep semicolon", `find . -exec grep -l pattern {} \;`},
+		{"find -exec grep plus", `find . -exec grep -l pattern {} +`},
+		{"find -execdir cat", `find . -execdir cat {} +`},
+		{"find -ok cat", `find . -ok cat {} \;`},
+		{"find -okdir wc", `find . -okdir wc -l {} \;`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,6 +66,117 @@ func TestValidate_AllowedFindFlags(t *testing.T) {
 			}
 			if err := newTestSandbox().validate(f); err != nil {
 				t.Fatalf("expected command to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidate_Xargs(t *testing.T) {
+	blocked := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"xargs python", `echo file | xargs python`, `command "python" is not allowed`},
+		{"xargs with blocked subcommand", `find . -name '*.go' | xargs python -c ''`, `command "python" is not allowed`},
+		{"xargs -I python", `find . | xargs -I {} python {}`, `command "python" is not allowed`},
+		{"xargs -n python", `find . | xargs -n1 python`, `command "python" is not allowed`},
+		{"xargs -- python", `find . | xargs -- python`, `command "python" is not allowed`},
+	}
+	for _, tt := range blocked {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = newTestSandbox().validate(f)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+
+	allowed := []struct {
+		name    string
+		command string
+	}{
+		{"xargs grep", `find . -name '*.go' | xargs grep pattern`},
+		{"xargs cat", `find . -name '*.txt' | xargs cat`},
+		{"xargs wc -l", `find . | xargs wc -l`},
+		{"xargs -n1 grep", `find . | xargs -n1 grep pattern`},
+		{"xargs -I{} cat", `find . | xargs -I{} cat {}`},
+		{"xargs -I {} cat", `find . | xargs -I {} cat {}`},
+		{"xargs -0 grep", `find . -print0 | xargs -0 grep pattern`},
+		{"xargs no command", `find . | xargs`},
+	}
+	for _, tt := range allowed {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := newTestSandbox().validate(f); err != nil {
+				t.Fatalf("expected command to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidate_RecursiveFindAndXargs(t *testing.T) {
+	allowed := []struct {
+		name    string
+		command string
+	}{
+		// nested find -exec: outer find runs inner find which runs grep
+		{"find -exec find -exec grep", `find . -exec find . -name '*.go' -exec grep pattern {} \; \;`},
+		// find -exec running xargs which runs grep
+		{"find -exec xargs grep", `find . -exec xargs grep pattern {} \;`},
+		// xargs running xargs which runs grep
+		{"xargs xargs grep", `find . | xargs xargs grep pattern`},
+		// xargs running find with -exec
+		{"xargs find -exec grep", `find . | xargs find . -exec grep pattern {} \;`},
+	}
+	for _, tt := range allowed {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := newTestSandbox().validate(f); err != nil {
+				t.Fatalf("expected command to be allowed, got: %v", err)
+			}
+		})
+	}
+
+	blocked := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		// nested find -exec: inner exec runs a blocked command
+		{"find -exec find -exec python", `find . -exec find . -exec python {} \; \;`, `command "python" is not allowed`},
+		// find -exec running xargs which runs a blocked command
+		{"find -exec xargs python", `find . -exec xargs python {} \;`, `command "python" is not allowed`},
+		// xargs running xargs which runs a blocked command
+		{"xargs xargs python", `find . | xargs xargs python`, `command "python" is not allowed`},
+		// xargs running find whose -exec runs a blocked command
+		{"xargs find -exec python", `find . | xargs find . -exec python {} \;`, `command "python" is not allowed`},
+	}
+	for _, tt := range blocked {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = newTestSandbox().validate(f)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
 			}
 		})
 	}

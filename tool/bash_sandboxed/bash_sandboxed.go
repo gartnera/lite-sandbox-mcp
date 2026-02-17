@@ -30,11 +30,15 @@ type Sandbox struct {
 	runtimeReadPaths []string
 	osSandbox        bool
 	pool             *os_sandbox.WorkerPool
+	// argValidators holds a reference to commandArgValidators so that
+	// validateSubCommand can look up per-command validators at runtime
+	// without creating a package-level initialization cycle.
+	argValidators map[string]func(s *Sandbox, args []*syntax.Word) error
 }
 
 // NewSandbox creates a Sandbox with no extra commands.
 func NewSandbox() *Sandbox {
-	return &Sandbox{}
+	return &Sandbox{argValidators: commandArgValidators}
 }
 
 // UpdateConfig replaces the sandbox configuration with the provided config.

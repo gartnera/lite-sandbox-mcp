@@ -13,7 +13,8 @@ import (
 //   - Networking: curl, wget, ping, nmap, etc. (data exfiltration / remote code fetch)
 //   - Archive write: gzip, etc. (arbitrary file writes to sensitive locations)
 //   - tar, unzip, ar are allowed with arg validators restricting to read-only operations
-//   - Shell escape: eval, exec, source, xargs (bypass command whitelist)
+//   - Shell escape: eval, exec, source (bypass command whitelist)
+//   - xargs is allowed with an arg validator that recursively validates the embedded command
 //   - Version control: gh (can execute hooks, fetch remote code)
 //   - git is allowed with arg validator restricting to read-only subcommands
 //   - Package managers: npm, pip, cargo, etc. (arbitrary code execution via install scripts)
@@ -177,6 +178,9 @@ var allowedCommands = map[string]bool{
 	"man":     true,
 	"info":    true,
 	"apropos": true,
+
+	// Pipe utilities (allowed with arg validator for recursive whitelist enforcement)
+	"xargs": true,
 }
 
 // writeCommands is the set of commands that perform write operations.
@@ -209,6 +213,7 @@ var commandArgValidators = map[string]func(s *Sandbox, args []*syntax.Word) erro
 	"go":    validateGoCommand,
 	"pnpm":  validatePnpmCommand,
 	"aws":   validateAWSCommand,
+	"xargs": validateXargsArgs,
 }
 
 func validateGitCommand(s *Sandbox, args []*syntax.Word) error {

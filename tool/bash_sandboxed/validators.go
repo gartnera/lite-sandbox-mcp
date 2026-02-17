@@ -7,12 +7,8 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// blockedFindFlags lists find flags that execute commands or modify the filesystem.
+// blockedFindFlags lists find flags that modify the filesystem or write to files.
 var blockedFindFlags = map[string]string{
-	"-exec":    "executes arbitrary commands",
-	"-execdir": "executes arbitrary commands",
-	"-ok":      "executes arbitrary commands",
-	"-okdir":   "executes arbitrary commands",
 	"-delete":  "deletes files",
 	"-fls":     "writes to a file",
 	"-fprint":  "writes to a file",
@@ -20,17 +16,133 @@ var blockedFindFlags = map[string]string{
 	"-fprintf": "writes to a file",
 }
 
+// findExecFlags is the set of find flags that execute a subcommand.
+// These are allowed but the embedded subcommand is validated recursively.
+var findExecFlags = map[string]bool{
+	"-exec":    true,
+	"-execdir": true,
+	"-ok":      true,
+	"-okdir":   true,
+}
+
+// isFindExecTerminator reports whether lit is a find -exec sequence terminator.
+// find accepts \; (backslash-semicolon) or + as terminators.
+func isFindExecTerminator(lit string) bool {
+	return lit == ";" || lit == `\;` || lit == "+"
+}
+
 // validateFindArgs checks that find is not called with dangerous flags.
-func validateFindArgs(_ *Sandbox, args []*syntax.Word) error {
-	for _, arg := range args {
-		lit := arg.Lit()
+// For -exec/-execdir/-ok/-okdir, the embedded subcommand is extracted and
+// validated recursively against the command whitelist.
+func validateFindArgs(s *Sandbox, args []*syntax.Word) error {
+	i := 1 // skip command name
+	for i < len(args) {
+		lit := args[i].Lit()
 		if lit == "" {
+			i++
+			continue
+		}
+		if findExecFlags[lit] {
+			execFlag := lit
+			i++
+			var subArgs []*syntax.Word
+			for i < len(args) {
+				subLit := args[i].Lit()
+				if isFindExecTerminator(subLit) {
+					i++
+					break
+				}
+				subArgs = append(subArgs, args[i])
+				i++
+			}
+			if len(subArgs) == 0 {
+				return fmt.Errorf("find %s has no command to execute", execFlag)
+			}
+			if err := validateSubCommand(s, subArgs); err != nil {
+				return fmt.Errorf("find %s: %w", execFlag, err)
+			}
 			continue
 		}
 		if reason, blocked := blockedFindFlags[lit]; blocked {
 			return fmt.Errorf("find flag %q is not allowed: %s", lit, reason)
 		}
+		i++
 	}
+	return nil
+}
+
+// validateSubCommand validates a command name and its arguments against the
+// whitelist, including any per-command argument validators. args[0] must be
+// the command name. Used for recursive validation of commands embedded in
+// find -exec and xargs.
+func validateSubCommand(s *Sandbox, args []*syntax.Word) error {
+	if len(args) == 0 {
+		return fmt.Errorf("empty command")
+	}
+	cmdName := args[0].Lit()
+	if cmdName == "" {
+		return fmt.Errorf("dynamic command names are not allowed")
+	}
+	extra := s.getExtraCommands()
+	if !allowedCommands[cmdName] && !extra[cmdName] {
+		return fmt.Errorf("command %q is not allowed", cmdName)
+	}
+	if validator, ok := s.argValidators[cmdName]; ok {
+		if err := validator(s, args); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// xargsArgConsumingFlags lists xargs short flags that consume the next
+// argument as their value (e.g., -I {}, -n 5).
+var xargsArgConsumingFlags = map[string]bool{
+	"-d": true, // GNU: delimiter character
+	"-E": true, // logical EOF string
+	"-I": true, // replace string
+	"-J": true, // BSD: insert-position replace string
+	"-L": true, // max input lines per invocation
+	"-n": true, // max args per invocation
+	"-P": true, // max parallel processes
+	"-R": true, // BSD: max replacements for -I
+	"-S": true, // BSD: max replace size for -I
+	"-s": true, // max chars per command line
+}
+
+// validateXargsArgs validates xargs by extracting the utility command from
+// its arguments and recursively validating it against the command whitelist.
+// If no command is given, xargs defaults to echo which is safe.
+func validateXargsArgs(s *Sandbox, args []*syntax.Word) error {
+	i := 1 // skip "xargs"
+	for i < len(args) {
+		lit := args[i].Lit()
+		// End of options marker
+		if lit == "--" {
+			i++
+			if i < len(args) {
+				return validateSubCommand(s, args[i:])
+			}
+			return nil
+		}
+		// Non-flag argument = start of the utility command
+		if !strings.HasPrefix(lit, "-") {
+			return validateSubCommand(s, args[i:])
+		}
+		// Long option (--foo or --foo=val): always a single token
+		if strings.HasPrefix(lit, "--") {
+			i++
+			continue
+		}
+		// Short flag: if exactly 2 chars ("-X") and it consumes the next arg,
+		// skip both. A longer token like "-I{}" has the value attached.
+		if len(lit) >= 2 && len(lit) == 2 && xargsArgConsumingFlags[lit[:2]] {
+			i += 2
+			continue
+		}
+		i++
+	}
+	// No explicit command — xargs defaults to echo, which is safe
 	return nil
 }
 

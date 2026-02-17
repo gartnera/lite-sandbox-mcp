@@ -240,7 +240,7 @@ func TestValidate_BlockedCommands(t *testing.T) {
 		{"exec", "exec echo hello", `command "exec" is not allowed`},
 		{"source", "source /dev/null", `command "source" is not allowed`},
 		{"dot source", ". /dev/null", `command "." is not allowed`},
-		{"xargs", "echo hello | xargs rm", `command "xargs" is not allowed`},
+		{"xargs with blocked command", "echo hello | xargs python", `command "python" is not allowed`},
 
 		// Text processing with write capability
 		{"awk", "awk '{print}' file", `command "awk" is not allowed`},
