@@ -55,8 +55,8 @@ func validatePaths(f *syntax.File, workDir string, readAllowedPaths, writeAllowe
 			if pathToCheck == "" || !looksLikePath(pathToCheck) {
 				continue
 			}
-			resolved := resolvePath(pathToCheck, workDir)
-			if !isUnderAllowedPaths(resolved, allowedPaths) {
+			resolved := ResolvePath(pathToCheck, workDir)
+			if !IsUnderAllowedPaths(resolved, allowedPaths) {
 				validationErr = fmt.Errorf("path %q resolves to %q which is outside allowed directories", lit, resolved)
 				return false
 			}
@@ -109,8 +109,8 @@ func validateRedirectPaths(f *syntax.File, workDir string, readAllowedPaths, wri
 			if lit == "/dev/null" {
 				continue
 			}
-			resolved := resolvePath(lit, workDir)
-			if !isUnderAllowedPaths(resolved, allowedPaths) {
+			resolved := ResolvePath(lit, workDir)
+			if !IsUnderAllowedPaths(resolved, allowedPaths) {
 				validationErr = fmt.Errorf("redirect path %q resolves to %q which is outside allowed directories", lit, resolved)
 				return false
 			}
@@ -178,9 +178,9 @@ func extractPathFromFlag(flag string) string {
 	return ""
 }
 
-// resolvePath resolves a potentially relative path to an absolute path,
+// ResolvePath resolves a potentially relative path to an absolute path,
 // handling symlinks for any existing prefix of the path.
-func resolvePath(path, workDir string) string {
+func ResolvePath(path, workDir string) string {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(workDir, path)
 	}
@@ -215,9 +215,9 @@ func resolveExistingPrefix(path string) string {
 	return filepath.Join(resolveExistingPrefix(dir), base)
 }
 
-// isUnderAllowedPaths checks whether the resolved path is equal to or nested
+// IsUnderAllowedPaths checks whether the resolved path is equal to or nested
 // under one of the allowed directories.
-func isUnderAllowedPaths(path string, allowedPaths []string) bool {
+func IsUnderAllowedPaths(path string, allowedPaths []string) bool {
 	for _, allowed := range allowedPaths {
 		if path == allowed || strings.HasPrefix(path, allowed+string(filepath.Separator)) {
 			return true
@@ -252,8 +252,8 @@ func validateExpandedPaths(args []string, workDir string, readAllowedPaths, writ
 		if pathToCheck == "" || !looksLikePath(pathToCheck) {
 			continue
 		}
-		resolved := resolvePath(pathToCheck, workDir)
-		if !isUnderAllowedPaths(resolved, allowedPaths) {
+		resolved := ResolvePath(pathToCheck, workDir)
+		if !IsUnderAllowedPaths(resolved, allowedPaths) {
 			return fmt.Errorf("path %q resolves to %q which is outside allowed directories", arg, resolved)
 		}
 		if isGitInternalPath(resolved) {
@@ -276,8 +276,8 @@ func validateOpenPath(path string, flag int, workDir string, readAllowedPaths, w
 	if isWriteFlag(flag) {
 		allowedPaths = writeAllowedPaths
 	}
-	resolved := resolvePath(path, workDir)
-	if !isUnderAllowedPaths(resolved, allowedPaths) {
+	resolved := ResolvePath(path, workDir)
+	if !IsUnderAllowedPaths(resolved, allowedPaths) {
 		return fmt.Errorf("path %q resolves to %q which is outside allowed directories", path, resolved)
 	}
 	if isGitInternalPath(resolved) {
