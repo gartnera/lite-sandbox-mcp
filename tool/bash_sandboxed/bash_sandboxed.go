@@ -424,12 +424,6 @@ func (s *Sandbox) execInWorker(ctx context.Context, args []string, pool *os_sand
 
 	hc := interp.HandlerCtx(ctx)
 
-	// Read stdin if available
-	var stdinData []byte
-	if hc.Stdin != nil {
-		stdinData, _ = io.ReadAll(hc.Stdin)
-	}
-
 	// Convert environment
 	envMap := make(map[string]string)
 	hc.Env.Each(func(name string, vr expand.Variable) bool {
@@ -440,28 +434,13 @@ func (s *Sandbox) execInWorker(ctx context.Context, args []string, pool *os_sand
 		return true
 	})
 
-	req := os_sandbox.WorkerRequest{
-		Args:      args,
-		Dir:       hc.Dir,
-		Env:       envMap,
-		StdinData: stdinData,
-	}
-
-	resp, err := w.Send(ctx, req)
+	exitCode, err := w.Exec(ctx, args, hc.Dir, envMap, hc.Stdin, hc.Stdout, hc.Stderr)
 	if err != nil {
 		return fmt.Errorf("worker communication failed: %w", err)
 	}
 
-	// Write captured output to parent's stdout/stderr
-	if len(resp.Stdout) > 0 {
-		hc.Stdout.Write(resp.Stdout)
-	}
-	if len(resp.Stderr) > 0 {
-		hc.Stderr.Write(resp.Stderr)
-	}
-
-	if resp.ExitCode != 0 {
-		return interp.ExitStatus(resp.ExitCode)
+	if exitCode != 0 {
+		return interp.ExitStatus(exitCode)
 	}
 
 	return nil

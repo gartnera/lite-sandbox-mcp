@@ -15,21 +15,40 @@ import (
 	"sync"
 )
 
-// WorkerRequest is sent from the MCP server to a worker process over stdin (gob).
-// The worker executes a single command (from interp.ExecHandler).
-type WorkerRequest struct {
-	Args      []string          // Command and arguments (e.g., ["ls", "-la"])
-	Dir       string            // Working directory
-	Env       map[string]string // Environment variables
-	StdinData []byte            // Data to send to command's stdin
+// HostMsgType identifies messages sent from host to worker.
+type HostMsgType int
+
+const (
+	HostMsgExec     HostMsgType = iota // Start a command (Args, Dir, Env)
+	HostMsgStdin                       // Stdin data chunk (Data)
+	HostMsgStdinEOF                    // No more stdin
+)
+
+// HostMsg is a message sent from the MCP server to a worker process.
+type HostMsg struct {
+	Type HostMsgType
+	Args []string          // For HostMsgExec
+	Dir  string            // For HostMsgExec
+	Env  map[string]string // For HostMsgExec
+	Data []byte            // For HostMsgStdin
 }
 
-// WorkerResponse is sent from a worker process back to the MCP server over stdout (gob).
-type WorkerResponse struct {
-	Stdout   []byte // Command's stdout
-	Stderr   []byte // Command's stderr
-	ExitCode int    // Command exit code
-	Error    string // Error message if communication/setup failed
+// WorkerMsgType identifies messages sent from worker to host.
+type WorkerMsgType int
+
+const (
+	WorkerMsgReady  WorkerMsgType = iota // Worker ready (startup signal)
+	WorkerMsgStdout                      // Stdout data chunk (Data)
+	WorkerMsgStderr                      // Stderr data chunk (Data)
+	WorkerMsgDone                        // Command finished (ExitCode, Error)
+)
+
+// WorkerMsg is a message sent from a worker process back to the MCP server.
+type WorkerMsg struct {
+	Type     WorkerMsgType
+	Data     []byte
+	ExitCode int
+	Error    string
 }
 
 // Worker manages a single bwrap sandbox process communicating via gob over stdin/stdout.
@@ -204,11 +223,15 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string, block
 		dec:      gob.NewDecoder(bufStdout),
 	}
 
-	// Wait for ready signal from worker (just an empty response)
-	var ready WorkerResponse
+	// Wait for ready signal from worker
+	var ready WorkerMsg
 	if err := w.dec.Decode(&ready); err != nil {
 		w.Close()
 		return nil, fmt.Errorf("failed to receive ready signal: %w", err)
+	}
+	if ready.Type != WorkerMsgReady {
+		w.Close()
+		return nil, fmt.Errorf("expected ready signal, got type %d", ready.Type)
 	}
 
 	slog.InfoContext(ctx, "worker ready", "pid", cmd.Process.Pid)
@@ -292,47 +315,117 @@ func generateSBPLProfile(workDir string, extraBinds []string, blockAWSCredential
 	return sb.String()
 }
 
-// Send sends a request to the worker and waits for a response.
-func (w *Worker) Send(ctx context.Context, req WorkerRequest) (WorkerResponse, error) {
+// Exec runs a command in the worker, streaming stdin/stdout/stderr.
+// stdin, stdout, stderr may be nil.
+// Returns the command exit code and any protocol error.
+func (w *Worker) Exec(ctx context.Context, args []string, dir string, env map[string]string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	if w.dead {
-		return WorkerResponse{}, fmt.Errorf("worker is dead")
+		w.mu.Unlock()
+		return 1, fmt.Errorf("worker is dead")
 	}
-
-	// Check if process has exited
 	if w.cmd.ProcessState != nil {
 		w.dead = true
-		return WorkerResponse{}, fmt.Errorf("worker process has exited")
+		w.mu.Unlock()
+		return 1, fmt.Errorf("worker process has exited")
 	}
 
-	slog.DebugContext(ctx, "sending request to worker", "args", req.Args)
+	slog.DebugContext(ctx, "sending exec to worker", "args", args)
 
-	// Send request
-	if err := w.enc.Encode(req); err != nil {
+	// Send exec message while holding the lock to prevent concurrent Exec calls.
+	if err := w.enc.Encode(HostMsg{Type: HostMsgExec, Args: args, Dir: dir, Env: env}); err != nil {
 		w.dead = true
-		return WorkerResponse{}, fmt.Errorf("failed to encode request: %w", err)
+		w.mu.Unlock()
+		return 1, fmt.Errorf("failed to send exec: %w", err)
 	}
-
-	// Flush the buffer to ensure data is sent
 	if err := w.bufStdin.Flush(); err != nil {
 		w.dead = true
-		return WorkerResponse{}, fmt.Errorf("failed to flush request: %w", err)
+		w.mu.Unlock()
+		return 1, fmt.Errorf("failed to flush exec: %w", err)
+	}
+	w.mu.Unlock()
+
+	// Pump stdin in a background goroutine; pumpStdin is the only writer after this point.
+	stdinDone := make(chan error, 1)
+	go func() {
+		stdinDone <- w.pumpStdin(stdin)
+	}()
+
+	// Read stdout/stderr/done messages until command finishes.
+	exitCode, execErr := w.readWorkerOutput(stdout, stderr)
+
+	// Wait for stdin pump.
+	if pumpErr := <-stdinDone; pumpErr != nil && execErr == nil {
+		execErr = pumpErr
 	}
 
-	slog.DebugContext(ctx, "waiting for response from worker")
-
-	// Read response
-	var resp WorkerResponse
-	if err := w.dec.Decode(&resp); err != nil {
+	if execErr != nil {
+		w.mu.Lock()
 		w.dead = true
-		return WorkerResponse{}, fmt.Errorf("failed to decode response: %w", err)
+		w.mu.Unlock()
 	}
 
-	slog.DebugContext(ctx, "received response from worker", "stdout_len", len(resp.Stdout), "stderr_len", len(resp.Stderr), "exit_code", resp.ExitCode, "has_error", resp.Error != "")
+	return exitCode, execErr
+}
 
-	return resp, nil
+// pumpStdin reads from r in 4096-byte chunks and sends them to the worker,
+// then sends HostMsgStdinEOF. If r is nil, only the EOF is sent.
+func (w *Worker) pumpStdin(r io.Reader) error {
+	if r != nil {
+		buf := make([]byte, 4096)
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				if encErr := w.enc.Encode(HostMsg{Type: HostMsgStdin, Data: chunk}); encErr != nil {
+					return fmt.Errorf("failed to send stdin chunk: %w", encErr)
+				}
+				if flushErr := w.bufStdin.Flush(); flushErr != nil {
+					return fmt.Errorf("failed to flush stdin chunk: %w", flushErr)
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("stdin read error: %w", err)
+			}
+		}
+	}
+	if err := w.enc.Encode(HostMsg{Type: HostMsgStdinEOF}); err != nil {
+		return fmt.Errorf("failed to send stdin EOF: %w", err)
+	}
+	return w.bufStdin.Flush()
+}
+
+// readWorkerOutput reads WorkerMsg messages until WorkerMsgDone,
+// writing stdout/stderr chunks to the provided writers.
+func (w *Worker) readWorkerOutput(stdout, stderr io.Writer) (int, error) {
+	for {
+		var msg WorkerMsg
+		if err := w.dec.Decode(&msg); err != nil {
+			return 1, fmt.Errorf("failed to decode worker message: %w", err)
+		}
+		switch msg.Type {
+		case WorkerMsgStdout:
+			if stdout != nil && len(msg.Data) > 0 {
+				stdout.Write(msg.Data) //nolint:errcheck
+			}
+		case WorkerMsgStderr:
+			if stderr != nil && len(msg.Data) > 0 {
+				stderr.Write(msg.Data) //nolint:errcheck
+			}
+		case WorkerMsgDone:
+			var err error
+			if msg.Error != "" {
+				err = fmt.Errorf("%s", msg.Error)
+			}
+			return msg.ExitCode, err
+		default:
+			return 1, fmt.Errorf("unexpected worker message type: %d", msg.Type)
+		}
+	}
 }
 
 // Close terminates the worker process.
