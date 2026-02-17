@@ -97,6 +97,28 @@ func (p *PnpmConfig) PnpmPublish() bool {
 	return *p.Publish
 }
 
+// AWSConfig controls AWS CLI permissions and IMDS server settings.
+type AWSConfig struct {
+	Enabled *bool  `yaml:"enabled,omitempty"`
+	Profile string `yaml:"profile,omitempty"`
+}
+
+// AWSEnabled returns whether aws commands are allowed (default: false).
+func (a *AWSConfig) AWSEnabled() bool {
+	if a == nil || a.Enabled == nil {
+		return false
+	}
+	return *a.Enabled
+}
+
+// AWSProfile returns the AWS profile to use for credentials (default: "default").
+func (a *AWSConfig) AWSProfile() string {
+	if a == nil || a.Profile == "" {
+		return "default"
+	}
+	return a.Profile
+}
+
 // RuntimesConfig controls code execution runtime permissions.
 type RuntimesConfig struct {
 	Go   *GoConfig   `yaml:"go,omitempty"`
@@ -109,6 +131,7 @@ type Config struct {
 	ExtraCommands    []string        `yaml:"extra_commands,omitempty"`
 	Git              *GitConfig      `yaml:"git,omitempty"`
 	Runtimes         *RuntimesConfig `yaml:"runtimes,omitempty"`
+	AWS              *AWSConfig      `yaml:"aws,omitempty"`
 	OSSandbox        *bool           `yaml:"os_sandbox,omitempty"`
 	OSSandboxWorkers *int            `yaml:"os_sandbox_workers,omitempty"`
 }

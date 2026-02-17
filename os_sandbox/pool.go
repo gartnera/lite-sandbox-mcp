@@ -99,6 +99,7 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string) (*Wor
 		// and will override the tmpfs if workDir is under /tmp (e.g., in tests)
 		// --ro-bind / / : read-only root filesystem
 		// --tmpfs /tmp : writable /tmp (needed by Go and other tools for build cache)
+		// --tmpfs <credential-dir> : empty overlay to block credential access
 		// --bind <runtime-path> <runtime-path> : writable runtime directories (GOPATH, etc.)
 		// --bind <cwd> <cwd> : writable current working directory (overrides tmpfs if under /tmp)
 		// --dev /dev : fresh devtmpfs
@@ -109,6 +110,20 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string) (*Wor
 		args := []string{
 			"--ro-bind", "/", "/",
 			"--tmpfs", "/tmp",
+		}
+
+		// Block credential directories with empty tmpfs overlays
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			awsDir := filepath.Join(homeDir, ".aws")
+			sshDir := filepath.Join(homeDir, ".ssh")
+			// Only add tmpfs if directory exists (bwrap fails if we try to mount over non-existent path)
+			if _, err := os.Stat(awsDir); err == nil {
+				args = append(args, "--tmpfs", awsDir)
+			}
+			if _, err := os.Stat(sshDir); err == nil {
+				args = append(args, "--tmpfs", sshDir)
+			}
 		}
 
 		// Add runtime bind mounts (e.g., GOPATH for Go runtime)
@@ -204,7 +219,12 @@ func generateSBPLProfile(workDir string, extraBinds []string) string {
 	sb.WriteString("(version 1)\n")
 	sb.WriteString("(deny default)\n")
 
-	// Allow read access to entire filesystem
+	// Deny access to credential directories (must come before allow rules)
+	// Block entire .aws and .ssh directories to prevent credential access
+	sb.WriteString("(deny file-read* (regex #\"^/Users/[^/]+/\\.aws/\"))\n")
+	sb.WriteString("(deny file-read* (regex #\"^/Users/[^/]+/\\.ssh/\"))\n")
+
+	// Allow read access to entire filesystem (except denied paths above)
 	sb.WriteString("(allow file-read* (subpath \"/\"))\n")
 
 	// Allow write access to workDir and its resolved path

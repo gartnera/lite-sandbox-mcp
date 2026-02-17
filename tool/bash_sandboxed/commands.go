@@ -145,6 +145,9 @@ var allowedCommands = map[string]bool{
 	"go":   true,
 	"pnpm": true,
 
+	// Cloud CLI tools (config-gated, credentials via IMDS)
+	"aws": true,
+
 	// Scoped write commands (path-validated to stay within allowedPaths)
 	"cp":    true,
 	"mv":    true,
@@ -205,6 +208,7 @@ var commandArgValidators = map[string]func(s *Sandbox, args []*syntax.Word) erro
 	"git":   validateGitCommand,
 	"go":    validateGoCommand,
 	"pnpm":  validatePnpmCommand,
+	"aws":   validateAWSCommand,
 }
 
 func validateGitCommand(s *Sandbox, args []*syntax.Word) error {
@@ -225,4 +229,14 @@ func validatePnpmCommand(s *Sandbox, args []*syntax.Word) error {
 		return fmt.Errorf("command \"pnpm\" is not allowed (runtimes.pnpm.enabled is disabled)")
 	}
 	return validatePnpmArgs(args, runtimesCfg.Pnpm)
+}
+
+func validateAWSCommand(s *Sandbox, args []*syntax.Word) error {
+	awsCfg := s.getAWSConfig()
+	if awsCfg == nil || !awsCfg.AWSEnabled() {
+		return fmt.Errorf("command \"aws\" is not allowed (aws.enabled is disabled)")
+	}
+	// AWS CLI credentials will come from IMDS endpoint, not files
+	// No additional argument validation needed - all aws subcommands allowed
+	return nil
 }

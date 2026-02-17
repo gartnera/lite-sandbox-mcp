@@ -25,6 +25,7 @@ type Sandbox struct {
 	extraCommands    map[string]bool
 	gitConfig        *config.GitConfig
 	runtimesConfig   *config.RuntimesConfig
+	awsConfig        *config.AWSConfig
 	runtimeReadPaths []string
 	osSandbox        bool
 	pool             *os_sandbox.WorkerPool
@@ -48,6 +49,7 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 	s.extraCommands = m
 	s.gitConfig = cfg.Git
 	s.runtimesConfig = cfg.Runtimes
+	s.awsConfig = cfg.AWS
 	s.runtimeReadPaths = runtimeReadPaths
 
 	// Handle OS sandbox enable/disable
@@ -91,6 +93,13 @@ func (s *Sandbox) getRuntimesConfig() *config.RuntimesConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.runtimesConfig
+}
+
+// getAWSConfig returns a snapshot of the current AWS config.
+func (s *Sandbox) getAWSConfig() *config.AWSConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.awsConfig
 }
 
 // RuntimeReadPaths returns the detected runtime paths that should be
