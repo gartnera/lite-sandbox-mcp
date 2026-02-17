@@ -1,6 +1,10 @@
 package bash_sandboxed
 
-import "mvdan.cc/sh/v3/syntax"
+import (
+	"fmt"
+
+	"mvdan.cc/sh/v3/syntax"
+)
 
 // allowedCommands is the whitelist of commands that are permitted to execute.
 // Only non-destructive, non-code-execution commands are included.
@@ -137,6 +141,10 @@ var allowedCommands = map[string]bool{
 	// Version control (read-only, with arg validator for git)
 	"git": true,
 
+	// Runtimes (config-gated, validated by commandArgValidators)
+	"go":   true,
+	"pnpm": true,
+
 	// Scoped write commands (path-validated to stay within allowedPaths)
 	"cp":    true,
 	"mv":    true,
@@ -186,11 +194,35 @@ var writeCommands = map[string]bool{
 // commandArgValidators is a registry of per-command argument validation functions.
 // Commands with dangerous flags (e.g., find -exec, find -delete) register a
 // validator here to block those flags while still allowing the command itself.
-var commandArgValidators = map[string]func(args []*syntax.Word) error{
+// Validators receive the *Sandbox so they can access config (e.g., runtimes, git).
+var commandArgValidators = map[string]func(s *Sandbox, args []*syntax.Word) error{
 	"find":  validateFindArgs,
 	"tar":   validateTarArgs,
 	"unzip": validateUnzipArgs,
 	"ar":    validateArArgs,
 	"rm":    validateRmArgs,
 	"sed":   validateSedArgs,
+	"git":   validateGitCommand,
+	"go":    validateGoCommand,
+	"pnpm":  validatePnpmCommand,
+}
+
+func validateGitCommand(s *Sandbox, args []*syntax.Word) error {
+	return validateGitArgs(args, s.getGitConfig())
+}
+
+func validateGoCommand(s *Sandbox, args []*syntax.Word) error {
+	runtimesCfg := s.getRuntimesConfig()
+	if runtimesCfg == nil || runtimesCfg.Go == nil || !runtimesCfg.Go.GoEnabled() {
+		return fmt.Errorf("command \"go\" is not allowed (runtimes.go.enabled is disabled)")
+	}
+	return validateGoArgs(args, runtimesCfg.Go)
+}
+
+func validatePnpmCommand(s *Sandbox, args []*syntax.Word) error {
+	runtimesCfg := s.getRuntimesConfig()
+	if runtimesCfg == nil || runtimesCfg.Pnpm == nil || !runtimesCfg.Pnpm.PnpmEnabled() {
+		return fmt.Errorf("command \"pnpm\" is not allowed (runtimes.pnpm.enabled is disabled)")
+	}
+	return validatePnpmArgs(args, runtimesCfg.Pnpm)
 }

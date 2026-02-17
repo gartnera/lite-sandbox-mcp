@@ -21,7 +21,7 @@ var blockedFindFlags = map[string]string{
 }
 
 // validateFindArgs checks that find is not called with dangerous flags.
-func validateFindArgs(args []*syntax.Word) error {
+func validateFindArgs(_ *Sandbox, args []*syntax.Word) error {
 	for _, arg := range args {
 		lit := arg.Lit()
 		if lit == "" {
@@ -44,7 +44,7 @@ var blockedTarOps = map[byte]string{
 
 // validateTarArgs ensures tar is invoked in list mode only (-t/--list).
 // Blocks extract (-x), create (-c), append (-r), update (-u), and --delete.
-func validateTarArgs(args []*syntax.Word) error {
+func validateTarArgs(_ *Sandbox, args []*syntax.Word) error {
 	hasListMode := false
 	for _, arg := range args[1:] { // skip command name
 		lit := arg.Lit()
@@ -106,7 +106,7 @@ func validateTarArgs(args []*syntax.Word) error {
 
 // validateUnzipArgs ensures unzip is invoked in list/test mode only.
 // Requires -l (list), -Z (zipinfo mode), or -t (test integrity).
-func validateUnzipArgs(args []*syntax.Word) error {
+func validateUnzipArgs(_ *Sandbox, args []*syntax.Word) error {
 	hasReadOnlyFlag := false
 	for _, arg := range args[1:] {
 		lit := arg.Lit()
@@ -144,7 +144,7 @@ var blockedArOps = map[byte]string{
 
 // validateArArgs ensures ar is invoked in read-only mode only.
 // Only permits t (list) and p (print to stdout) operations.
-func validateArArgs(args []*syntax.Word) error {
+func validateArArgs(_ *Sandbox, args []*syntax.Word) error {
 	if len(args) < 2 {
 		return fmt.Errorf("ar requires an operation argument")
 	}

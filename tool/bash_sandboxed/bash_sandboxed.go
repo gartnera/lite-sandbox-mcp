@@ -227,8 +227,6 @@ func validateAssigns(assigns []*syntax.Assign) error {
 // 5. Blocked environment variable assignments (PATH, LD_PRELOAD, etc.)
 func (s *Sandbox) validate(f *syntax.File) error {
 	extra := s.getExtraCommands()
-	gitCfg := s.getGitConfig()
-	runtimesCfg := s.getRuntimesConfig()
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
 		if validationErr != nil {
@@ -253,35 +251,12 @@ func (s *Sandbox) validate(f *syntax.File) error {
 					validationErr = fmt.Errorf("dynamic command names are not allowed")
 					return false
 				}
-				// Handle runtime commands dynamically based on config
-				if cmdName == "go" {
-					if runtimesCfg == nil || runtimesCfg.Go == nil || !runtimesCfg.Go.GoEnabled() {
-						validationErr = fmt.Errorf("command %q is not allowed (runtimes.go.enabled is disabled)", cmdName)
-						return false
-					}
-					if err := validateGoArgs(n.Args, runtimesCfg.Go); err != nil {
-						validationErr = err
-						return false
-					}
-				} else if cmdName == "pnpm" {
-					if runtimesCfg == nil || runtimesCfg.Pnpm == nil || !runtimesCfg.Pnpm.PnpmEnabled() {
-						validationErr = fmt.Errorf("command %q is not allowed (runtimes.pnpm.enabled is disabled)", cmdName)
-						return false
-					}
-					if err := validatePnpmArgs(n.Args, runtimesCfg.Pnpm); err != nil {
-						validationErr = err
-						return false
-					}
-				} else if !allowedCommands[cmdName] && !extra[cmdName] {
+				if !allowedCommands[cmdName] && !extra[cmdName] {
 					validationErr = fmt.Errorf("command %q is not allowed", cmdName)
 					return false
-				} else if cmdName == "git" {
-					if err := validateGitArgs(n.Args, gitCfg); err != nil {
-						validationErr = err
-						return false
-					}
-				} else if validator, ok := commandArgValidators[cmdName]; ok {
-					if err := validator(n.Args); err != nil {
+				}
+				if validator, ok := commandArgValidators[cmdName]; ok {
+					if err := validator(s, n.Args); err != nil {
 						validationErr = err
 						return false
 					}

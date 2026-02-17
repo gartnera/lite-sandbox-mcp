@@ -13,7 +13,7 @@ var blockedRmFlags = map[string]string{
 }
 
 // validateRmArgs checks that rm is not called with dangerous flags.
-func validateRmArgs(args []*syntax.Word) error {
+func validateRmArgs(_ *Sandbox, args []*syntax.Word) error {
 	for _, arg := range args[1:] {
 		lit := arg.Lit()
 		if lit == "" {
@@ -37,7 +37,7 @@ func validateRmArgs(args []*syntax.Word) error {
 // Note: GNU sed supports --sandbox which disables e/r/w commands natively,
 // but BSD sed does not support this flag, so we parse expressions instead
 // to stay portable across both implementations.
-func validateSedArgs(args []*syntax.Word) error {
+func validateSedArgs(_ *Sandbox, args []*syntax.Word) error {
 	for _, arg := range args[1:] {
 		text := wordText(arg)
 		if text == "" {
