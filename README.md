@@ -4,7 +4,27 @@ An MCP (Model Context Protocol) server that provides a `bash_sandboxed` tool as 
 
 ## Configuring with Claude Code
 
-### 1. Add the MCP server
+### Automatic Installation
+
+The easiest way to configure Claude Code is to use the built-in install command:
+
+```bash
+lite-sandbox-mcp install
+```
+
+This automatically:
+1. Adds the MCP server to `~/.claude/.mcp.json`
+2. Adds auto-allow permission to `~/.claude/settings.json`
+3. Adds usage directive to `~/.claude/CLAUDE.md`
+
+Restart Claude Code after running the install command.
+
+<details>
+<summary><b>Manual Installation</b> (click to expand)</summary>
+
+If you prefer to configure manually or need a custom setup:
+
+#### 1. Add the MCP server
 
 Add this to `.mcp.json` in your project root (or `~/.claude/.mcp.json` for global):
 
@@ -21,7 +41,7 @@ Add this to `.mcp.json` in your project root (or `~/.claude/.mcp.json` for globa
 
 Replace `/path/to/lite-sandbox-mcp` with the actual path to the built binary.
 
-### 2. Auto-allow the tool
+#### 2. Auto-allow the tool
 
 Add this to `~/.claude/settings.json` so Claude Code never prompts for permission:
 
@@ -35,7 +55,7 @@ Add this to `~/.claude/settings.json` so Claude Code never prompts for permissio
 }
 ```
 
-### 3. Direct Claude to prefer the sandboxed tool
+#### 3. Direct Claude to prefer the sandboxed tool
 
 Add the following to your `~/.claude/CLAUDE.md` (global) or project-level `CLAUDE.md`:
 
@@ -44,6 +64,8 @@ ALWAYS prefer using the mcp__lite-sandbox-mcp__bash_sandboxed tool for running s
 ```
 
 > **Note**: The tool name follows the pattern `mcp__<server-name>__<tool-name>`. If you named the server differently in your MCP config (e.g. `lite-sandbox`), adjust the tool name accordingly (e.g. `mcp__lite-sandbox__bash_sandboxed`).
+
+</details>
 
 ## Configuration
 
@@ -265,6 +287,7 @@ This is a lightweight, best-effort sandbox based on static analysis. It is **not
 
 ```bash
 go build -o lite-sandbox-mcp
+./lite-sandbox-mcp install  # Automatically configure Claude Code
 ```
 
 ## Development
