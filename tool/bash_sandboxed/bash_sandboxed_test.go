@@ -434,13 +434,13 @@ func TestValidate_ExtraCommands(t *testing.T) {
 	}
 
 	// After adding curl as an extra command, it should be allowed
-	s.UpdateConfig(&config.Config{ExtraCommands: []string{"curl"}})
+	s.UpdateConfig(&config.Config{ExtraCommands: []string{"curl"}}, "")
 	if err := s.validate(f); err != nil {
 		t.Fatalf("expected curl to be allowed with extra commands, got: %v", err)
 	}
 
 	// After clearing extra commands, curl should be blocked again
-	s.UpdateConfig(&config.Config{})
+	s.UpdateConfig(&config.Config{}, "")
 	if err := s.validate(f); err == nil {
 		t.Fatal("expected curl to be blocked after clearing extra commands")
 	}

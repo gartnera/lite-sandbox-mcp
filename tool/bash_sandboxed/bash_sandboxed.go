@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/gartnera/lite-sandbox-mcp/config"
+	"github.com/gartnera/lite-sandbox-mcp/os_sandbox"
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
@@ -23,6 +24,8 @@ type Sandbox struct {
 	extraCommands  map[string]bool
 	gitConfig      *config.GitConfig
 	runtimesConfig *config.RuntimesConfig
+	osSandbox      bool
+	pool           *os_sandbox.WorkerPool
 }
 
 // NewSandbox creates a Sandbox with no extra commands.
@@ -31,7 +34,7 @@ func NewSandbox() *Sandbox {
 }
 
 // UpdateConfig replaces the sandbox configuration with the provided config.
-func (s *Sandbox) UpdateConfig(cfg *config.Config) {
+func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 	m := make(map[string]bool, len(cfg.ExtraCommands))
 	for _, c := range cfg.ExtraCommands {
 		m[c] = true
@@ -40,6 +43,26 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config) {
 	s.extraCommands = m
 	s.gitConfig = cfg.Git
 	s.runtimesConfig = cfg.Runtimes
+
+	// Handle OS sandbox enable/disable
+	newOSSandbox := cfg.OSSandboxEnabled()
+	if newOSSandbox != s.osSandbox {
+		// OS sandbox setting changed
+		if s.pool != nil {
+			slog.Info("closing existing worker pool")
+			s.pool.Close()
+			s.pool = nil
+		}
+		if newOSSandbox {
+			slog.Info("enabling OS sandbox", "workers", cfg.OSSandboxWorkersCount())
+			s.pool = os_sandbox.NewWorkerPool(cfg.OSSandboxWorkersCount(), workDir)
+		}
+		s.osSandbox = newOSSandbox
+	} else if newOSSandbox && s.pool != nil {
+		// OS sandbox is enabled but worker count may have changed
+		// For now, we don't dynamically resize the pool
+		// Could be enhanced in the future
+	}
 	s.mu.Unlock()
 }
 
@@ -62,6 +85,17 @@ func (s *Sandbox) getRuntimesConfig() *config.RuntimesConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.runtimesConfig
+}
+
+// Close shuts down the sandbox, closing any worker pool.
+func (s *Sandbox) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.pool != nil {
+		return s.pool.Close()
+	}
+	return nil
 }
 
 // ParseBash parses a command string as bash and returns the AST.
@@ -189,6 +223,7 @@ func extractCommandName(w *syntax.Word) string {
 func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, allowedPaths []string) (string, error) {
 	slog.InfoContext(ctx, "executing sandboxed bash", "command", command)
 
+	// Parse and validate
 	f, err := ParseBash(command)
 	if err != nil {
 		return "", err
@@ -206,8 +241,23 @@ func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, a
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 
+	// Always execute using interp
+	// If OS sandbox is enabled, ExecHandler will send commands to worker
+	return s.executeWithInterp(ctx, f, workDir, allowedPaths)
+}
+
+// executeWithInterp executes the parsed command using interp.
+// If OS sandbox is enabled, ExecHandler delegates to worker pool.
+func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir string, allowedPaths []string) (string, error) {
+	s.mu.RLock()
+	useOSSandbox := s.osSandbox
+	pool := s.pool
+	s.mu.RUnlock()
+
 	var out bytes.Buffer
-	runner, err := interp.New(
+
+	// Build interpreter options
+	opts := []interp.RunnerOption{
 		interp.Dir(workDir),
 		interp.StdIO(nil, &out, &out),
 		interp.Env(expand.ListEnviron(os.Environ()...)),
@@ -225,7 +275,16 @@ func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, a
 			}
 			return interp.DefaultOpenHandler()(ctx, path, flag, perm)
 		}),
-	)
+	}
+
+	// If OS sandbox enabled, use custom ExecHandler to delegate to worker
+	if useOSSandbox && pool != nil {
+		opts = append(opts, interp.ExecHandler(func(ctx context.Context, args []string) error {
+			return s.execInWorker(ctx, args, pool)
+		}))
+	}
+
+	runner, err := interp.New(opts...)
 	if err != nil {
 		return "", fmt.Errorf("failed to create interpreter: %w", err)
 	}
@@ -236,4 +295,57 @@ func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, a
 		return output, fmt.Errorf("command failed: %w\noutput: %s", err, output)
 	}
 	return output, nil
+}
+
+// execInWorker sends a command to the worker pool for execution in bwrap.
+func (s *Sandbox) execInWorker(ctx context.Context, args []string, pool *os_sandbox.WorkerPool) error {
+	w, err := pool.Acquire()
+	if err != nil {
+		return fmt.Errorf("failed to acquire worker: %w", err)
+	}
+	defer pool.Release(w)
+
+	hc := interp.HandlerCtx(ctx)
+
+	// Read stdin if available
+	var stdinData []byte
+	if hc.Stdin != nil {
+		stdinData, _ = io.ReadAll(hc.Stdin)
+	}
+
+	// Convert environment
+	envMap := make(map[string]string)
+	hc.Env.Each(func(name string, vr expand.Variable) bool {
+		if !vr.IsSet() {
+			return true
+		}
+		envMap[name] = vr.String()
+		return true
+	})
+
+	req := os_sandbox.WorkerRequest{
+		Args:      args,
+		Dir:       hc.Dir,
+		Env:       envMap,
+		StdinData: stdinData,
+	}
+
+	resp, err := w.Send(ctx, req)
+	if err != nil {
+		return fmt.Errorf("worker communication failed: %w", err)
+	}
+
+	// Write captured output to parent's stdout/stderr
+	if len(resp.Stdout) > 0 {
+		hc.Stdout.Write(resp.Stdout)
+	}
+	if len(resp.Stderr) > 0 {
+		hc.Stderr.Write(resp.Stderr)
+	}
+
+	if resp.ExitCode != 0 {
+		return interp.ExitStatus(resp.ExitCode)
+	}
+
+	return nil
 }

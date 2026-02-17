@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -72,19 +73,27 @@ func runServe() error {
 
 	sandbox := bash_sandboxed.NewSandbox()
 
+	// Get current working directory for worker pool initialization
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Warn("failed to load config, using defaults", "error", err)
 	} else {
-		sandbox.UpdateConfig(cfg)
+		sandbox.UpdateConfig(cfg, cwd)
 		slog.Info("loaded config", "extra_commands", cfg.ExtraCommands)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	defer sandbox.Close() // Clean up worker pool on exit
+
 	go func() {
 		err := config.Watch(ctx, func(cfg *config.Config) {
-			sandbox.UpdateConfig(cfg)
+			sandbox.UpdateConfig(cfg, cwd)
 			slog.Info("reloaded config", "extra_commands", cfg.ExtraCommands)
 		})
 		if err != nil && ctx.Err() == nil {
