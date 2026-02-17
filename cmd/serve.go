@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -45,6 +46,9 @@ func newMCPServer(sandbox *bash_sandboxed.Sandbox) *server.MCPServer {
 			mcp.Description("The bash command to execute"),
 			mcp.Required(),
 		),
+		mcp.WithNumber("timeout",
+			mcp.Description("Optional timeout in milliseconds (max 600000ms, default 120000ms)"),
+		),
 	)
 
 	s.AddTool(bashTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -53,12 +57,32 @@ func newMCPServer(sandbox *bash_sandboxed.Sandbox) *server.MCPServer {
 			return mcp.NewToolResultError("missing required parameter: command"), nil
 		}
 
+		// Extract optional timeout parameter (default 120000ms = 2 minutes)
+		timeoutMs := 120000.0 // default
+		if args, ok := request.Params.Arguments.(map[string]any); ok {
+			if timeout, ok := args["timeout"]; ok {
+				if timeoutFloat, ok := timeout.(float64); ok {
+					if timeoutFloat > 600000 {
+						return mcp.NewToolResultError("timeout exceeds maximum of 600000ms (10 minutes)"), nil
+					}
+					if timeoutFloat < 0 {
+						return mcp.NewToolResultError("timeout must be positive"), nil
+					}
+					timeoutMs = timeoutFloat
+				}
+			}
+		}
+
 		cwd, err := os.Getwd()
 		if err != nil {
 			return mcp.NewToolResultError("failed to get working directory: " + err.Error()), nil
 		}
 
-		output, err := sandbox.Execute(ctx, command, cwd, []string{cwd})
+		// Create a context with timeout
+		timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+		defer cancel()
+
+		output, err := sandbox.Execute(timeoutCtx, command, cwd, []string{cwd})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gartnera/lite-sandbox-mcp/config"
 )
@@ -443,5 +444,41 @@ func TestValidate_ExtraCommands(t *testing.T) {
 	s.UpdateConfig(&config.Config{}, "")
 	if err := s.validate(f); err == nil {
 		t.Fatal("expected curl to be blocked after clearing extra commands")
+	}
+}
+
+func TestExecute_Timeout(t *testing.T) {
+	workDir := t.TempDir()
+	s := NewSandbox()
+
+	// Create a context with a short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	// Command that sleeps longer than the timeout
+	_, err := s.Execute(ctx, "sleep 10", workDir, []string{workDir})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("expected context deadline exceeded error, got: %v", err)
+	}
+}
+
+func TestExecute_CompletesBeforeTimeout(t *testing.T) {
+	workDir := t.TempDir()
+	s := NewSandbox()
+
+	// Create a context with a generous timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Command that completes quickly
+	out, err := s.Execute(ctx, "echo fast", workDir, []string{workDir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "fast\n" {
+		t.Fatalf("expected 'fast\\n', got %q", out)
 	}
 }
