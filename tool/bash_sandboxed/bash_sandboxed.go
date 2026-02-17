@@ -360,9 +360,13 @@ func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir
 	var out bytes.Buffer
 
 	// Build environment with IMDS endpoint if AWS is enabled
+	// IMPORTANT: Set as actual environment variable so subprocesses (like aws cli) can see it
 	env := os.Environ()
 	if imdsEndpoint != "" {
-		env = append(env, fmt.Sprintf("AWS_EC2_METADATA_SERVICE_ENDPOINT=%s", imdsEndpoint))
+		envVar := fmt.Sprintf("AWS_EC2_METADATA_SERVICE_ENDPOINT=%s", imdsEndpoint)
+		env = append(env, envVar)
+		// Also set in actual process environment so it's visible in shell sessions
+		os.Setenv("AWS_EC2_METADATA_SERVICE_ENDPOINT", imdsEndpoint)
 	}
 
 	// Build interpreter options

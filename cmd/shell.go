@@ -4,14 +4,17 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"mvdan.cc/sh/v3/syntax"
 
 	"github.com/gartnera/lite-sandbox-mcp/config"
+	"github.com/gartnera/lite-sandbox-mcp/internal/imds"
 	bash_sandboxed "github.com/gartnera/lite-sandbox-mcp/tool/bash_sandboxed"
 )
 
@@ -42,6 +45,34 @@ func runShell() error {
 		sandbox.UpdateConfig(cfg, workDir)
 	}
 	defer sandbox.Close()
+
+	// Start IMDS server if AWS uses IMDS (force_profile is set)
+	var imdsServer *imds.Server
+	if cfg != nil && cfg.AWS != nil && cfg.AWS.UsesIMDS() {
+		imdsServer, err = imds.NewServer("127.0.0.1:0", cfg.AWS.IMDSProfile())
+		if err != nil {
+			return fmt.Errorf("failed to create IMDS server: %w", err)
+		}
+
+		// Start IMDS server in background
+		go func() {
+			fmt.Fprintf(os.Stderr, "IMDS server: %s\n", imdsServer.Endpoint())
+			if err := imdsServer.Start(); err != nil && err != http.ErrServerClosed {
+				fmt.Fprintf(os.Stderr, "IMDS server error: %v\n", err)
+			}
+		}()
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			imdsServer.Shutdown(shutdownCtx)
+		}()
+
+		// Set IMDS endpoint in sandbox
+		sandbox.SetIMDSEndpoint(imdsServer.Endpoint())
+
+		// Also set in process environment for subprocesses
+		os.Setenv("AWS_EC2_METADATA_SERVICE_ENDPOINT", imdsServer.Endpoint())
+	}
 
 	ctx := context.Background()
 	scanner := bufio.NewScanner(os.Stdin)
