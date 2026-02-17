@@ -48,7 +48,9 @@ type Worker struct {
 // The worker runs the "lite-sandbox sandbox-worker" subcommand inside a platform-specific sandbox.
 // On Linux, this uses bwrap. On macOS, this uses sandbox-exec with SBPL profiles.
 // extraBinds specifies additional writable paths to bind mount (e.g., for runtimes).
-func StartWorker(ctx context.Context, workDir string, extraBinds []string) (*Worker, error) {
+// blockAWSCredentials specifies whether to block ~/.aws directory.
+// Note: ~/.ssh is ALWAYS blocked regardless of this parameter.
+func StartWorker(ctx context.Context, workDir string, extraBinds []string, blockAWSCredentials bool) (*Worker, error) {
 	// Find our own binary path to pass to the sandbox
 	self, err := os.Executable()
 	if err != nil {
@@ -115,14 +117,18 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string) (*Wor
 		// Block credential directories with empty tmpfs overlays
 		homeDir, err := os.UserHomeDir()
 		if err == nil {
-			awsDir := filepath.Join(homeDir, ".aws")
+			// Always block ~/.ssh
 			sshDir := filepath.Join(homeDir, ".ssh")
-			// Only add tmpfs if directory exists (bwrap fails if we try to mount over non-existent path)
-			if _, err := os.Stat(awsDir); err == nil {
-				args = append(args, "--tmpfs", awsDir)
-			}
 			if _, err := os.Stat(sshDir); err == nil {
 				args = append(args, "--tmpfs", sshDir)
+			}
+
+			// Conditionally block ~/.aws
+			if blockAWSCredentials {
+				awsDir := filepath.Join(homeDir, ".aws")
+				if _, err := os.Stat(awsDir); err == nil {
+					args = append(args, "--tmpfs", awsDir)
+				}
 			}
 		}
 
@@ -154,7 +160,7 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string) (*Wor
 	case "darwin":
 		// Build sandbox-exec command
 		// Generate SBPL profile that allows read-only root and writable workDir + extraBinds
-		profile := generateSBPLProfile(realWorkDir, extraBinds)
+		profile := generateSBPLProfile(realWorkDir, extraBinds, blockAWSCredentials)
 
 		// sandbox-exec -p <profile> <binary> <args>
 		cmd = exec.CommandContext(ctx, "sandbox-exec", "-p", profile, self, "sandbox-worker")
@@ -213,16 +219,22 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string) (*Wor
 // generateSBPLProfile generates a Scheme-based sandbox profile for macOS sandbox-exec.
 // The profile allows read-only access to the entire filesystem, but restricts writes
 // to specific directories (workDir, extraBinds, and system temp directories).
-func generateSBPLProfile(workDir string, extraBinds []string) string {
+// blockAWSCredentials controls whether ~/.aws is blocked.
+// Note: ~/.ssh is ALWAYS blocked regardless of blockAWSCredentials.
+func generateSBPLProfile(workDir string, extraBinds []string, blockAWSCredentials bool) string {
 	var sb strings.Builder
 
 	sb.WriteString("(version 1)\n")
 	sb.WriteString("(deny default)\n")
 
 	// Deny access to credential directories (must come before allow rules)
-	// Block entire .aws and .ssh directories to prevent credential access
-	sb.WriteString("(deny file-read* (regex #\"^/Users/[^/]+/\\.aws/\"))\n")
+	// Always block ~/.ssh
 	sb.WriteString("(deny file-read* (regex #\"^/Users/[^/]+/\\.ssh/\"))\n")
+
+	// Conditionally block ~/.aws
+	if blockAWSCredentials {
+		sb.WriteString("(deny file-read* (regex #\"^/Users/[^/]+/\\.aws/\"))\n")
+	}
 
 	// Allow read access to entire filesystem (except denied paths above)
 	sb.WriteString("(allow file-read* (subpath \"/\"))\n")
@@ -348,30 +360,34 @@ func (w *Worker) IsDead() bool {
 
 // WorkerPool manages a pool of bwrap worker processes.
 type WorkerPool struct {
-	size         int
-	workDir      string
-	runtimeBinds []string // Additional bind mounts for runtime paths (Go, etc.)
-	workers      chan *Worker
-	mu           sync.Mutex
-	started      int
-	ctx          context.Context
-	cancel       context.CancelFunc
-	closeOnce    sync.Once
+	size                int
+	workDir             string
+	runtimeBinds        []string // Additional bind mounts for runtime paths (Go, etc.)
+	blockAWSCredentials bool     // Whether to block ~/.aws directory (always blocks ~/.ssh)
+	workers             chan *Worker
+	mu                  sync.Mutex
+	started             int
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	closeOnce           sync.Once
 }
 
 // NewWorkerPool creates a new worker pool with the specified size.
 // Workers are created lazily on demand.
 // extraBinds specifies additional writable paths to bind mount (e.g., for runtimes).
-func NewWorkerPool(size int, workDir string, extraBinds []string) *WorkerPool {
+// blockAWSCredentials specifies whether to block ~/.aws directory.
+// Note: ~/.ssh is ALWAYS blocked regardless of this parameter.
+func NewWorkerPool(size int, workDir string, extraBinds []string, blockAWSCredentials bool) *WorkerPool {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &WorkerPool{
-		size:         size,
-		workDir:      workDir,
-		runtimeBinds: extraBinds,
-		workers:      make(chan *Worker, size),
-		ctx:          ctx,
-		cancel:       cancel,
+		size:                size,
+		workDir:             workDir,
+		runtimeBinds:        extraBinds,
+		blockAWSCredentials: blockAWSCredentials,
+		workers:             make(chan *Worker, size),
+		ctx:                 ctx,
+		cancel:              cancel,
 	}
 }
 
@@ -413,7 +429,7 @@ func (p *WorkerPool) Acquire() (*Worker, error) {
 
 // startNewWorker starts a new worker process.
 func (p *WorkerPool) startNewWorker() (*Worker, error) {
-	w, err := StartWorker(p.ctx, p.workDir, p.runtimeBinds)
+	w, err := StartWorker(p.ctx, p.workDir, p.runtimeBinds, p.blockAWSCredentials)
 	if err != nil {
 		// Decrement started count on failure
 		p.mu.Lock()

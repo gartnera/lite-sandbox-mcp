@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gartnera/lite-sandbox-mcp/config"
+	"github.com/gartnera/lite-sandbox-mcp/internal/imds"
 	bash_sandboxed "github.com/gartnera/lite-sandbox-mcp/tool/bash_sandboxed"
 )
 
@@ -117,10 +119,54 @@ func runServe() error {
 	defer cancel()
 	defer sandbox.Close() // Clean up worker pool on exit
 
+	// Start IMDS server if AWS uses IMDS (force_profile is set)
+	var imdsServer *imds.Server
+	if cfg != nil && cfg.AWS != nil && cfg.AWS.UsesIMDS() {
+		// Use port 0 to get a random available port
+		imdsServer, err = imds.NewServer("127.0.0.1:0", cfg.AWS.IMDSProfile())
+		if err != nil {
+			return fmt.Errorf("failed to create IMDS server: %w", err)
+		}
+
+		// Start IMDS server in background
+		go func() {
+			slog.Info("IMDS server endpoint", "url", imdsServer.Endpoint())
+			if err := imdsServer.Start(); err != nil && err != http.ErrServerClosed {
+				slog.Error("IMDS server failed", "error", err)
+			}
+		}()
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			if err := imdsServer.Shutdown(shutdownCtx); err != nil {
+				slog.Error("failed to shutdown IMDS server", "error", err)
+			}
+		}()
+
+		// Set IMDS endpoint in sandbox
+		sandbox.SetIMDSEndpoint(imdsServer.Endpoint())
+	}
+
 	go func() {
-		err := config.Watch(ctx, func(cfg *config.Config) {
-			sandbox.UpdateConfig(cfg, cwd)
-			slog.Info("reloaded config", "extra_commands", cfg.ExtraCommands)
+		err := config.Watch(ctx, func(newCfg *config.Config) {
+			sandbox.UpdateConfig(newCfg, cwd)
+			slog.Info("reloaded config", "extra_commands", newCfg.ExtraCommands)
+
+			// Handle IMDS server lifecycle on config changes
+			wasEnabled := cfg != nil && cfg.AWS != nil && cfg.AWS.AWSEnabled()
+			nowEnabled := newCfg != nil && newCfg.AWS != nil && newCfg.AWS.AWSEnabled()
+
+			if !wasEnabled && nowEnabled {
+				// AWS was just enabled
+				slog.Info("AWS enabled, starting IMDS server")
+				// TODO: Start IMDS server dynamically
+			} else if wasEnabled && !nowEnabled {
+				// AWS was just disabled
+				slog.Info("AWS disabled, stopping IMDS server")
+				// TODO: Stop IMDS server dynamically
+			}
+
+			cfg = newCfg
 		})
 		if err != nil && ctx.Err() == nil {
 			slog.Error("config watcher failed", "error", err)

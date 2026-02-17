@@ -97,26 +97,46 @@ func (p *PnpmConfig) PnpmPublish() bool {
 	return *p.Publish
 }
 
-// AWSConfig controls AWS CLI permissions and IMDS server settings.
+// AWSConfig controls AWS CLI permissions and credential delivery method.
+// Two modes:
+//  1. allow_raw_credentials: true - AWS CLI reads from ~/.aws/credentials directly (no blocking)
+//  2. force_profile: "name" - AWS CLI uses IMDS server with specified profile (blocks ~/.aws/)
 type AWSConfig struct {
-	Enabled *bool  `yaml:"enabled,omitempty"`
-	Profile string `yaml:"profile,omitempty"`
+	AllowRawCredentials *bool  `yaml:"allow_raw_credentials,omitempty"`
+	ForceProfile        string `yaml:"force_profile,omitempty"`
 }
 
-// AWSEnabled returns whether aws commands are allowed (default: false).
+// AWSEnabled returns whether aws commands are allowed at all (default: false).
+// Either allow_raw_credentials or force_profile must be set.
 func (a *AWSConfig) AWSEnabled() bool {
-	if a == nil || a.Enabled == nil {
+	if a == nil {
 		return false
 	}
-	return *a.Enabled
+	return a.AllowRawCredentials != nil && *a.AllowRawCredentials || a.ForceProfile != ""
 }
 
-// AWSProfile returns the AWS profile to use for credentials (default: "default").
-func (a *AWSConfig) AWSProfile() string {
-	if a == nil || a.Profile == "" {
-		return "default"
+// AllowsRawCredentials returns whether AWS CLI can read from ~/.aws/credentials directly.
+// If true, ~/.aws/ is NOT blocked and no IMDS server is started.
+func (a *AWSConfig) AllowsRawCredentials() bool {
+	if a == nil || a.AllowRawCredentials == nil {
+		return false
 	}
-	return a.Profile
+	return *a.AllowRawCredentials
+}
+
+// UsesIMDS returns whether AWS CLI should use IMDS server for credentials.
+// If true, ~/.aws/ IS blocked and IMDS server provides credentials via force_profile.
+func (a *AWSConfig) UsesIMDS() bool {
+	if a == nil {
+		return false
+	}
+	return a.ForceProfile != ""
+}
+
+// IMDSProfile returns the AWS profile to use for IMDS credentials.
+// Only valid when UsesIMDS() returns true.
+func (a *AWSConfig) IMDSProfile() string {
+	return a.ForceProfile
 }
 
 // RuntimesConfig controls code execution runtime permissions.

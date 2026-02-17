@@ -26,6 +26,7 @@ type Sandbox struct {
 	gitConfig        *config.GitConfig
 	runtimesConfig   *config.RuntimesConfig
 	awsConfig        *config.AWSConfig
+	imdsEndpoint     string
 	runtimeReadPaths []string
 	osSandbox        bool
 	pool             *os_sandbox.WorkerPool
@@ -45,6 +46,9 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 	// Detect runtime paths for read-only access (e.g., GOPATH, GOCACHE, pnpm store)
 	runtimeReadPaths := detectRuntimeBinds(cfg.Runtimes)
 
+	// Determine if AWS credentials should be blocked
+	blockAWSCredentials := shouldBlockAWSCredentials(cfg.AWS)
+
 	s.mu.Lock()
 	s.extraCommands = m
 	s.gitConfig = cfg.Git
@@ -62,8 +66,8 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 			s.pool = nil
 		}
 		if newOSSandbox {
-			slog.Info("enabling OS sandbox", "workers", cfg.OSSandboxWorkersCount())
-			s.pool = os_sandbox.NewWorkerPool(cfg.OSSandboxWorkersCount(), workDir, runtimeReadPaths)
+			slog.Info("enabling OS sandbox", "workers", cfg.OSSandboxWorkersCount(), "block_aws_credentials", blockAWSCredentials)
+			s.pool = os_sandbox.NewWorkerPool(cfg.OSSandboxWorkersCount(), workDir, runtimeReadPaths, blockAWSCredentials)
 		}
 		s.osSandbox = newOSSandbox
 	} else if newOSSandbox && s.pool != nil {
@@ -72,6 +76,18 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 		// Could be enhanced in the future
 	}
 	s.mu.Unlock()
+}
+
+// shouldBlockAWSCredentials determines if ~/.aws/ should be blocked.
+// Returns true if AWS is configured to use IMDS (force_profile set).
+// Returns false if AWS allows raw credentials or is not configured.
+// Note: ~/.ssh/ is ALWAYS blocked regardless of this setting.
+func shouldBlockAWSCredentials(awsCfg *config.AWSConfig) bool {
+	if awsCfg == nil {
+		return false
+	}
+	// Block AWS credentials only when using IMDS (force_profile is set)
+	return awsCfg.UsesIMDS()
 }
 
 // getExtraCommands returns a snapshot of the current extra commands.
@@ -100,6 +116,13 @@ func (s *Sandbox) getAWSConfig() *config.AWSConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.awsConfig
+}
+
+// SetIMDSEndpoint sets the IMDS endpoint URL for AWS credential fetching.
+func (s *Sandbox) SetIMDSEndpoint(endpoint string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.imdsEndpoint = endpoint
 }
 
 // RuntimeReadPaths returns the detected runtime paths that should be
@@ -331,15 +354,22 @@ func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir
 	s.mu.RLock()
 	useOSSandbox := s.osSandbox
 	pool := s.pool
+	imdsEndpoint := s.imdsEndpoint
 	s.mu.RUnlock()
 
 	var out bytes.Buffer
+
+	// Build environment with IMDS endpoint if AWS is enabled
+	env := os.Environ()
+	if imdsEndpoint != "" {
+		env = append(env, fmt.Sprintf("AWS_EC2_METADATA_SERVICE_ENDPOINT=%s", imdsEndpoint))
+	}
 
 	// Build interpreter options
 	opts := []interp.RunnerOption{
 		interp.Dir(workDir),
 		interp.StdIO(nil, &out, &out),
-		interp.Env(expand.ListEnviron(os.Environ()...)),
+		interp.Env(expand.ListEnviron(env...)),
 		interp.CallHandler(func(ctx context.Context, args []string) ([]string, error) {
 			hc := interp.HandlerCtx(ctx)
 			if err := validateExpandedPaths(args, hc.Dir, readAllowedPaths, writeAllowedPaths); err != nil {
