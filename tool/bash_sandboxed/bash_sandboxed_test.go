@@ -53,7 +53,7 @@ func TestParseBash_Invalid(t *testing.T) {
 
 func TestBashSandboxed_Executes(t *testing.T) {
 	workDir := t.TempDir()
-	out, err := NewSandbox().Execute(context.Background(), "echo hello", workDir, []string{workDir})
+	out, err := NewSandbox().Execute(context.Background(), "echo hello", workDir, []string{workDir}, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestBashSandboxed_Executes(t *testing.T) {
 
 func TestBashSandboxed_FailingCommand(t *testing.T) {
 	workDir := t.TempDir()
-	_, err := NewSandbox().Execute(context.Background(), "false", workDir, []string{workDir})
+	_, err := NewSandbox().Execute(context.Background(), "false", workDir, []string{workDir}, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error for failing command")
 	}
@@ -72,7 +72,7 @@ func TestBashSandboxed_FailingCommand(t *testing.T) {
 
 func TestBashSandboxed_InvalidSyntax(t *testing.T) {
 	workDir := t.TempDir()
-	_, err := NewSandbox().Execute(context.Background(), "echo 'hello", workDir, []string{workDir})
+	_, err := NewSandbox().Execute(context.Background(), "echo 'hello", workDir, []string{workDir}, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error for invalid syntax")
 	}
@@ -456,7 +456,7 @@ func TestExecute_Timeout(t *testing.T) {
 	defer cancel()
 
 	// Command that sleeps longer than the timeout
-	_, err := s.Execute(ctx, "sleep 10", workDir, []string{workDir})
+	_, err := s.Execute(ctx, "sleep 10", workDir, []string{workDir}, []string{workDir})
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -474,7 +474,7 @@ func TestExecute_CompletesBeforeTimeout(t *testing.T) {
 	defer cancel()
 
 	// Command that completes quickly
-	out, err := s.Execute(ctx, "echo fast", workDir, []string{workDir})
+	out, err := s.Execute(ctx, "echo fast", workDir, []string{workDir}, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

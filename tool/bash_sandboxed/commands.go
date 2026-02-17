@@ -168,6 +168,21 @@ var allowedCommands = map[string]bool{
 	"apropos": true,
 }
 
+// writeCommands is the set of commands that perform write operations.
+// Path arguments to these commands are validated against writeAllowedPaths
+// rather than readAllowedPaths. This matches the "Scoped write commands"
+// category in allowedCommands, plus mkdir.
+var writeCommands = map[string]bool{
+	"cp":    true,
+	"mv":    true,
+	"rm":    true,
+	"touch": true,
+	"chmod": true,
+	"ln":    true,
+	"sed":   true,
+	"mkdir": true,
+}
+
 // commandArgValidators is a registry of per-command argument validation functions.
 // Commands with dangerous flags (e.g., find -exec, find -delete) register a
 // validator here to block those flags while still allowing the command itself.

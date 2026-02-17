@@ -29,7 +29,7 @@ func TestOSSandboxBasicExecution(t *testing.T) {
 	defer s.Close()
 
 	// Test basic command
-	output, err := s.Execute(context.Background(), "echo hello", tmpDir, []string{tmpDir})
+	output, err := s.Execute(context.Background(), "echo hello", tmpDir, []string{tmpDir}, []string{tmpDir})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -52,14 +52,14 @@ func TestOSSandboxFileIsolation(t *testing.T) {
 	defer s.Close()
 
 	// Try to write outside workdir - should fail
-	output, err := s.Execute(context.Background(), "touch /root/testfile", tmpDir, []string{tmpDir})
+	output, err := s.Execute(context.Background(), "touch /root/testfile", tmpDir, []string{tmpDir}, []string{tmpDir})
 	if err == nil {
 		t.Errorf("expected error when writing to /root, got success. output: %s", output)
 	}
 
 	// Try to write inside workdir - should succeed
 	testFile := filepath.Join(tmpDir, "testfile")
-	_, err = s.Execute(context.Background(), "touch "+testFile, tmpDir, []string{tmpDir})
+	_, err = s.Execute(context.Background(), "touch "+testFile, tmpDir, []string{tmpDir}, []string{tmpDir})
 	if err != nil {
 		t.Errorf("expected success when writing to workdir, got error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestOSSandboxWorkerPool(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		go func(n int) {
-			output, err := s.Execute(context.Background(), "echo test", tmpDir, []string{tmpDir})
+			output, err := s.Execute(context.Background(), "echo test", tmpDir, []string{tmpDir}, []string{tmpDir})
 			results <- result{output, err}
 		}(i)
 	}
@@ -175,7 +175,7 @@ go 1.21
 
 	// Test go build
 	t.Run("go build", func(t *testing.T) {
-		output, err := s.Execute(context.Background(), "go build -o testbin", tmpDir, []string{tmpDir})
+		output, err := s.Execute(context.Background(), "go build -o testbin", tmpDir, []string{tmpDir}, []string{tmpDir})
 		if err != nil {
 			t.Fatalf("go build failed: %v, output: %s", err, output)
 		}
@@ -189,7 +189,7 @@ go 1.21
 
 	// Test go test
 	t.Run("go test", func(t *testing.T) {
-		output, err := s.Execute(context.Background(), "go test -v", tmpDir, []string{tmpDir})
+		output, err := s.Execute(context.Background(), "go test -v", tmpDir, []string{tmpDir}, []string{tmpDir})
 		if err != nil {
 			t.Fatalf("go test failed: %v, output: %s", err, output)
 		}
@@ -208,7 +208,7 @@ go 1.21
 		}
 
 		cmd := "GOBIN=" + binDir + " go install"
-		output, err := s.Execute(context.Background(), cmd, tmpDir, []string{tmpDir})
+		output, err := s.Execute(context.Background(), cmd, tmpDir, []string{tmpDir}, []string{tmpDir})
 		if err != nil {
 			t.Fatalf("go install failed: %v, output: %s", err, output)
 		}
@@ -239,7 +239,7 @@ go 1.21
 		os.Remove(defaultBinPath)
 
 		// Install without specifying GOBIN (should use default GOPATH/bin)
-		output2, err := s.Execute(context.Background(), "go install", tmpDir, []string{tmpDir})
+		output2, err := s.Execute(context.Background(), "go install", tmpDir, []string{tmpDir}, []string{tmpDir})
 		if err != nil {
 			t.Fatalf("go install to default GOPATH failed: %v, output: %s", err, output2)
 		}

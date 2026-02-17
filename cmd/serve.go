@@ -82,7 +82,9 @@ func newMCPServer(sandbox *bash_sandboxed.Sandbox) *server.MCPServer {
 		timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
 		defer cancel()
 
-		output, err := sandbox.Execute(timeoutCtx, command, cwd, []string{cwd})
+		readPaths := append([]string{cwd}, sandbox.RuntimeReadPaths()...)
+		writePaths := []string{cwd}
+		output, err := sandbox.Execute(timeoutCtx, command, cwd, readPaths, writePaths)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

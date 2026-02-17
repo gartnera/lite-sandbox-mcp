@@ -2,6 +2,7 @@ package bash_sandboxed
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -11,7 +12,9 @@ import (
 // validatePaths checks that all path-like arguments in the AST resolve to
 // locations under the allowed directories. This prevents reading files outside
 // the sandbox boundary (e.g., cat /etc/passwd, cat ../../../etc/shadow).
-func validatePaths(f *syntax.File, workDir string, allowedPaths []string) error {
+// Write commands (cp, mv, rm, etc.) are checked against writeAllowedPaths;
+// all other commands are checked against readAllowedPaths.
+func validatePaths(f *syntax.File, workDir string, readAllowedPaths, writeAllowedPaths []string) error {
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
 		if validationErr != nil {
@@ -20,6 +23,14 @@ func validatePaths(f *syntax.File, workDir string, allowedPaths []string) error 
 		callExpr, ok := node.(*syntax.CallExpr)
 		if !ok {
 			return true
+		}
+		// Determine which allowed paths to use based on command name
+		allowedPaths := readAllowedPaths
+		if len(callExpr.Args) > 0 {
+			cmdName := extractCommandName(callExpr.Args[0])
+			if writeCommands[cmdName] {
+				allowedPaths = writeAllowedPaths
+			}
 		}
 		for i, arg := range callExpr.Args {
 			if i == 0 {
@@ -62,8 +73,9 @@ func validatePaths(f *syntax.File, workDir string, allowedPaths []string) error 
 // validateRedirectPaths checks that file targets in redirections resolve to
 // locations under the allowed directories. This covers both input redirects (<)
 // and output redirects (>, >>, etc.) which must respect path boundaries.
-// Output redirects to /dev/null are always allowed.
-func validateRedirectPaths(f *syntax.File, workDir string, allowedPaths []string) error {
+// Input redirects are checked against readAllowedPaths; output redirects are
+// checked against writeAllowedPaths. Output redirects to /dev/null are always allowed.
+func validateRedirectPaths(f *syntax.File, workDir string, readAllowedPaths, writeAllowedPaths []string) error {
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
 		if validationErr != nil {
@@ -76,11 +88,16 @@ func validateRedirectPaths(f *syntax.File, workDir string, allowedPaths []string
 		for _, r := range stmt.Redirs {
 			// Only check redirects that reference file paths.
 			// fd dups (DplIn, DplOut) and heredocs don't have file targets.
+			var allowedPaths []string
 			switch r.Op {
-			case syntax.RdrIn, syntax.RdrInOut,
-				syntax.RdrOut, syntax.AppOut, syntax.ClbOut,
+			case syntax.RdrIn:
+				allowedPaths = readAllowedPaths
+			case syntax.RdrOut, syntax.AppOut, syntax.ClbOut,
 				syntax.RdrAll, syntax.AppAll:
-				// These take a file path as target.
+				allowedPaths = writeAllowedPaths
+			case syntax.RdrInOut:
+				// Read+write; must satisfy write permissions
+				allowedPaths = writeAllowedPaths
 			default:
 				continue
 			}
@@ -92,9 +109,6 @@ func validateRedirectPaths(f *syntax.File, workDir string, allowedPaths []string
 			if lit == "/dev/null" {
 				continue
 			}
-			// For output redirects, all targets must be path-validated.
-			// For relative paths that don't look like paths (e.g., "file.txt"),
-			// resolve them against workDir.
 			resolved := resolvePath(lit, workDir)
 			if !isUnderAllowedPaths(resolved, allowedPaths) {
 				validationErr = fmt.Errorf("redirect path %q resolves to %q which is outside allowed directories", lit, resolved)
@@ -216,9 +230,14 @@ func isUnderAllowedPaths(path string, allowedPaths []string) bool {
 // This is called by the interpreter's CallHandler, where all variables and
 // command substitutions have been resolved to their actual values.
 // This catches bypasses like "cat $HOME/secret" that static validation misses.
-func validateExpandedPaths(args []string, workDir string, allowedPaths []string) error {
+// Write commands are checked against writeAllowedPaths; others against readAllowedPaths.
+func validateExpandedPaths(args []string, workDir string, readAllowedPaths, writeAllowedPaths []string) error {
 	if len(args) == 0 {
 		return nil
+	}
+	allowedPaths := readAllowedPaths
+	if writeCommands[args[0]] {
+		allowedPaths = writeAllowedPaths
 	}
 	for _, arg := range args[1:] {
 		if arg == ".git" || strings.HasPrefix(arg, ".git/") || strings.HasPrefix(arg, ".git\\") {
@@ -247,9 +266,15 @@ func validateExpandedPaths(args []string, workDir string, allowedPaths []string)
 // validateOpenPath checks a file path before the interpreter opens it (for
 // redirections). This is called by the interpreter's OpenHandler, where
 // variables in redirect targets have been expanded to actual paths.
-func validateOpenPath(path string, workDir string, allowedPaths []string) error {
+// If the open flags include any write bits, the path is checked against
+// writeAllowedPaths; otherwise it is checked against readAllowedPaths.
+func validateOpenPath(path string, flag int, workDir string, readAllowedPaths, writeAllowedPaths []string) error {
 	if path == "/dev/null" {
 		return nil
+	}
+	allowedPaths := readAllowedPaths
+	if isWriteFlag(flag) {
+		allowedPaths = writeAllowedPaths
 	}
 	resolved := resolvePath(path, workDir)
 	if !isUnderAllowedPaths(resolved, allowedPaths) {
@@ -259,4 +284,10 @@ func validateOpenPath(path string, workDir string, allowedPaths []string) error 
 		return fmt.Errorf("path %q accesses .git directory which is not allowed", path)
 	}
 	return nil
+}
+
+// isWriteFlag returns true if the open flags include any write-related bits.
+func isWriteFlag(flag int) bool {
+	const writeBits = os.O_WRONLY | os.O_RDWR | os.O_CREATE | os.O_APPEND | os.O_TRUNC
+	return flag&writeBits != 0
 }

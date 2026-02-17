@@ -21,12 +21,13 @@ import (
 // Sandbox executes bash commands after parsing and validating them against
 // the built-in allowlist plus any extra commands from config.
 type Sandbox struct {
-	mu             sync.RWMutex
-	extraCommands  map[string]bool
-	gitConfig      *config.GitConfig
-	runtimesConfig *config.RuntimesConfig
-	osSandbox      bool
-	pool           *os_sandbox.WorkerPool
+	mu               sync.RWMutex
+	extraCommands    map[string]bool
+	gitConfig        *config.GitConfig
+	runtimesConfig   *config.RuntimesConfig
+	runtimeReadPaths []string
+	osSandbox        bool
+	pool             *os_sandbox.WorkerPool
 }
 
 // NewSandbox creates a Sandbox with no extra commands.
@@ -40,10 +41,14 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 	for _, c := range cfg.ExtraCommands {
 		m[c] = true
 	}
+	// Detect runtime paths for read-only access (e.g., GOPATH, GOCACHE, pnpm store)
+	runtimeReadPaths := detectRuntimeBinds(cfg.Runtimes)
+
 	s.mu.Lock()
 	s.extraCommands = m
 	s.gitConfig = cfg.Git
 	s.runtimesConfig = cfg.Runtimes
+	s.runtimeReadPaths = runtimeReadPaths
 
 	// Handle OS sandbox enable/disable
 	newOSSandbox := cfg.OSSandboxEnabled()
@@ -56,8 +61,7 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 		}
 		if newOSSandbox {
 			slog.Info("enabling OS sandbox", "workers", cfg.OSSandboxWorkersCount())
-			extraBinds := detectRuntimeBinds(cfg.Runtimes)
-			s.pool = os_sandbox.NewWorkerPool(cfg.OSSandboxWorkersCount(), workDir, extraBinds)
+			s.pool = os_sandbox.NewWorkerPool(cfg.OSSandboxWorkersCount(), workDir, runtimeReadPaths)
 		}
 		s.osSandbox = newOSSandbox
 	} else if newOSSandbox && s.pool != nil {
@@ -87,6 +91,15 @@ func (s *Sandbox) getRuntimesConfig() *config.RuntimesConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.runtimesConfig
+}
+
+// RuntimeReadPaths returns the detected runtime paths that should be
+// readable (but not writable) by sandboxed commands. These include paths
+// like GOPATH, GOCACHE, and pnpm store directories.
+func (s *Sandbox) RuntimeReadPaths() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.runtimeReadPaths
 }
 
 // Close shuts down the sandbox, closing any worker pool.
@@ -299,9 +312,10 @@ func extractCommandName(w *syntax.Word) string {
 
 // Execute parses, validates, and executes a bash command.
 // workDir is the working directory for the command and for resolving relative paths.
-// allowedPaths are absolute directories that the command is permitted to access.
+// readAllowedPaths are absolute directories that read-only commands may access.
+// writeAllowedPaths are absolute directories that write commands may access.
 // It returns the combined stdout and stderr output.
-func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, allowedPaths []string) (string, error) {
+func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, readAllowedPaths, writeAllowedPaths []string) (string, error) {
 	slog.InfoContext(ctx, "executing sandboxed bash", "command", command)
 
 	// Parse and validate
@@ -314,22 +328,22 @@ func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, a
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 
-	if err := validatePaths(f, workDir, allowedPaths); err != nil {
+	if err := validatePaths(f, workDir, readAllowedPaths, writeAllowedPaths); err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 
-	if err := validateRedirectPaths(f, workDir, allowedPaths); err != nil {
+	if err := validateRedirectPaths(f, workDir, readAllowedPaths, writeAllowedPaths); err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 
 	// Always execute using interp
 	// If OS sandbox is enabled, ExecHandler will send commands to worker
-	return s.executeWithInterp(ctx, f, workDir, allowedPaths)
+	return s.executeWithInterp(ctx, f, workDir, readAllowedPaths, writeAllowedPaths)
 }
 
 // executeWithInterp executes the parsed command using interp.
 // If OS sandbox is enabled, ExecHandler delegates to worker pool.
-func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir string, allowedPaths []string) (string, error) {
+func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir string, readAllowedPaths, writeAllowedPaths []string) (string, error) {
 	s.mu.RLock()
 	useOSSandbox := s.osSandbox
 	pool := s.pool
@@ -344,14 +358,14 @@ func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir
 		interp.Env(expand.ListEnviron(os.Environ()...)),
 		interp.CallHandler(func(ctx context.Context, args []string) ([]string, error) {
 			hc := interp.HandlerCtx(ctx)
-			if err := validateExpandedPaths(args, hc.Dir, allowedPaths); err != nil {
+			if err := validateExpandedPaths(args, hc.Dir, readAllowedPaths, writeAllowedPaths); err != nil {
 				return nil, err
 			}
 			return args, nil
 		}),
 		interp.OpenHandler(func(ctx context.Context, path string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
 			hc := interp.HandlerCtx(ctx)
-			if err := validateOpenPath(path, hc.Dir, allowedPaths); err != nil {
+			if err := validateOpenPath(path, flag, hc.Dir, readAllowedPaths, writeAllowedPaths); err != nil {
 				return nil, err
 			}
 			return interp.DefaultOpenHandler()(ctx, path, flag, perm)

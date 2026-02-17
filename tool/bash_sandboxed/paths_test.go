@@ -34,7 +34,7 @@ func TestValidateRedirectPaths_Allowed(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			if err := validateRedirectPaths(f, workDir, []string{workDir}); err != nil {
+			if err := validateRedirectPaths(f, workDir, []string{workDir}, []string{workDir}); err != nil {
 				t.Fatalf("expected redirect path to be allowed, got: %v", err)
 			}
 		})
@@ -63,7 +63,7 @@ func TestValidateRedirectPaths_Blocked(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validateRedirectPaths(f, workDir, []string{workDir})
+			err = validateRedirectPaths(f, workDir, []string{workDir}, []string{workDir})
 			if err == nil {
 				t.Fatal("expected redirect path validation error")
 			}
@@ -79,7 +79,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	os.WriteFile(filepath.Join(workDir, "input.txt"), []byte("hello\n"), 0o644)
 
 	// Input redirect from file in allowed dir
-	out, err := NewSandbox().Execute(context.Background(), "cat < "+workDir+"/input.txt", workDir, []string{workDir})
+	out, err := NewSandbox().Execute(context.Background(), "cat < "+workDir+"/input.txt", workDir, []string{workDir}, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	}
 
 	// Heredoc
-	out, err = NewSandbox().Execute(context.Background(), "cat <<EOF\nworld\nEOF", workDir, []string{workDir})
+	out, err = NewSandbox().Execute(context.Background(), "cat <<EOF\nworld\nEOF", workDir, []string{workDir}, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	}
 
 	// /dev/null output
-	out, err = NewSandbox().Execute(context.Background(), "echo hello > /dev/null", workDir, []string{workDir})
+	out, err = NewSandbox().Execute(context.Background(), "echo hello > /dev/null", workDir, []string{workDir}, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	}
 
 	// Output redirect to file in allowed dir
-	_, err = NewSandbox().Execute(context.Background(), "echo hello > "+workDir+"/output.txt", workDir, []string{workDir})
+	_, err = NewSandbox().Execute(context.Background(), "echo hello > "+workDir+"/output.txt", workDir, []string{workDir}, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 	}
 
 	// Append redirect to file in allowed dir
-	_, err = NewSandbox().Execute(context.Background(), "echo world >> "+workDir+"/output.txt", workDir, []string{workDir})
+	_, err = NewSandbox().Execute(context.Background(), "echo world >> "+workDir+"/output.txt", workDir, []string{workDir}, []string{workDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestBashSandboxed_RedirectAllowed(t *testing.T) {
 
 func TestBashSandboxed_RedirectPathBlocked(t *testing.T) {
 	workDir := t.TempDir()
-	_, err := NewSandbox().Execute(context.Background(), "cat < /etc/passwd", workDir, []string{workDir})
+	_, err := NewSandbox().Execute(context.Background(), "cat < /etc/passwd", workDir, []string{workDir}, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error for redirect path outside allowed dirs")
 	}
@@ -203,7 +203,7 @@ func TestValidatePaths_Allowed(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			if err := validatePaths(f, workDir, []string{workDir}); err != nil {
+			if err := validatePaths(f, workDir, []string{workDir}, []string{workDir}); err != nil {
 				t.Fatalf("expected path to be allowed, got: %v", err)
 			}
 		})
@@ -255,7 +255,7 @@ func TestValidatePaths_Blocked(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validatePaths(f, workDir, []string{workDir})
+			err = validatePaths(f, workDir, []string{workDir}, []string{workDir})
 			if err == nil {
 				t.Fatal("expected path validation error")
 			}
@@ -292,7 +292,7 @@ func TestValidatePaths_GitDirectoryBlocked(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validatePaths(f, workDir, []string{workDir})
+			err = validatePaths(f, workDir, []string{workDir}, []string{workDir})
 			if err == nil {
 				t.Fatal("expected path validation error for .git access")
 			}
@@ -314,7 +314,7 @@ func TestValidatePaths_SymlinkEscape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	err = validatePaths(f, workDir, []string{workDir})
+	err = validatePaths(f, workDir, []string{workDir}, []string{workDir})
 	if err == nil {
 		t.Fatal("expected path validation error for symlink escape")
 	}
@@ -334,13 +334,13 @@ func TestValidatePaths_MultipleAllowedPaths(t *testing.T) {
 		t.Fatalf("parse error: %v", err)
 	}
 	// Should be blocked with only workDir allowed
-	err = validatePaths(f, workDir, []string{workDir})
+	err = validatePaths(f, workDir, []string{workDir}, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error when extra dir not in allowed paths")
 	}
 
 	// Should be allowed with both dirs
-	err = validatePaths(f, workDir, []string{workDir, extraDir})
+	err = validatePaths(f, workDir, []string{workDir, extraDir}, []string{workDir, extraDir})
 	if err != nil {
 		t.Fatalf("expected path to be allowed with multiple allowed paths, got: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestValidatePaths_InSubshellAndPipeline(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = validatePaths(f, workDir, []string{workDir})
+			err = validatePaths(f, workDir, []string{workDir}, []string{workDir})
 			if err == nil {
 				t.Fatal("expected path validation error")
 			}
@@ -374,7 +374,7 @@ func TestValidatePaths_InSubshellAndPipeline(t *testing.T) {
 
 func TestBashSandboxed_PathBlocked(t *testing.T) {
 	workDir := t.TempDir()
-	_, err := NewSandbox().Execute(context.Background(), "cat /etc/passwd", workDir, []string{workDir})
+	_, err := NewSandbox().Execute(context.Background(), "cat /etc/passwd", workDir, []string{workDir}, []string{workDir})
 	if err == nil {
 		t.Fatal("expected error for path outside allowed dirs")
 	}
@@ -399,7 +399,7 @@ func TestBashSandboxed_VariableExpansionPathBlocked(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewSandbox().Execute(context.Background(), tt.command, workDir, []string{workDir})
+			_, err := NewSandbox().Execute(context.Background(), tt.command, workDir, []string{workDir}, []string{workDir})
 			if err == nil {
 				t.Fatal("expected error for variable expansion path outside allowed dirs")
 			}
@@ -425,7 +425,7 @@ func TestBashSandboxed_VariableExpansionAllowed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, err := NewSandbox().Execute(context.Background(), tt.command, workDir, []string{workDir})
+			out, err := NewSandbox().Execute(context.Background(), tt.command, workDir, []string{workDir}, []string{workDir})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -434,4 +434,213 @@ func TestBashSandboxed_VariableExpansionAllowed(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidatePaths_ReadWriteSeparation(t *testing.T) {
+	workDir := t.TempDir()
+	extraReadDir := t.TempDir()
+
+	os.WriteFile(filepath.Join(extraReadDir, "data.txt"), []byte("hello"), 0o644)
+
+	readPaths := []string{workDir, extraReadDir}
+	writePaths := []string{workDir}
+
+	t.Run("read command allowed on read-only path", func(t *testing.T) {
+		f, err := ParseBash("cat " + extraReadDir + "/data.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if err := validatePaths(f, workDir, readPaths, writePaths); err != nil {
+			t.Fatalf("expected read to be allowed on read-only path, got: %v", err)
+		}
+	})
+
+	t.Run("grep allowed on read-only path", func(t *testing.T) {
+		f, err := ParseBash("grep hello " + extraReadDir + "/data.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if err := validatePaths(f, workDir, readPaths, writePaths); err != nil {
+			t.Fatalf("expected grep to be allowed on read-only path, got: %v", err)
+		}
+	})
+
+	t.Run("write command blocked on read-only path", func(t *testing.T) {
+		f, err := ParseBash("cp file.txt " + extraReadDir + "/evil.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		err = validatePaths(f, workDir, readPaths, writePaths)
+		if err == nil {
+			t.Fatal("expected write command to be blocked on read-only path")
+		}
+		if !strings.Contains(err.Error(), "outside allowed directories") {
+			t.Fatalf("expected outside allowed directories error, got %q", err.Error())
+		}
+	})
+
+	t.Run("touch blocked on read-only path", func(t *testing.T) {
+		f, err := ParseBash("touch " + extraReadDir + "/evil.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		err = validatePaths(f, workDir, readPaths, writePaths)
+		if err == nil {
+			t.Fatal("expected touch to be blocked on read-only path")
+		}
+	})
+
+	t.Run("rm blocked on read-only path", func(t *testing.T) {
+		f, err := ParseBash("rm " + extraReadDir + "/data.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		err = validatePaths(f, workDir, readPaths, writePaths)
+		if err == nil {
+			t.Fatal("expected rm to be blocked on read-only path")
+		}
+	})
+
+	t.Run("mv blocked on read-only path", func(t *testing.T) {
+		f, err := ParseBash("mv " + extraReadDir + "/data.txt file.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		err = validatePaths(f, workDir, readPaths, writePaths)
+		if err == nil {
+			t.Fatal("expected mv to be blocked on read-only path")
+		}
+	})
+
+	t.Run("write command allowed in write path", func(t *testing.T) {
+		f, err := ParseBash("touch " + workDir + "/newfile.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if err := validatePaths(f, workDir, readPaths, writePaths); err != nil {
+			t.Fatalf("expected write command in write path to be allowed, got: %v", err)
+		}
+	})
+}
+
+func TestValidateRedirectPaths_ReadWriteSeparation(t *testing.T) {
+	workDir := t.TempDir()
+	extraReadDir := t.TempDir()
+
+	os.WriteFile(filepath.Join(extraReadDir, "input.txt"), []byte("hello"), 0o644)
+
+	readPaths := []string{workDir, extraReadDir}
+	writePaths := []string{workDir}
+
+	t.Run("input redirect from read-only path allowed", func(t *testing.T) {
+		f, err := ParseBash("cat < " + extraReadDir + "/input.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if err := validateRedirectPaths(f, workDir, readPaths, writePaths); err != nil {
+			t.Fatalf("expected input redirect from read-only path to be allowed, got: %v", err)
+		}
+	})
+
+	t.Run("output redirect to read-only path blocked", func(t *testing.T) {
+		f, err := ParseBash("echo hello > " + extraReadDir + "/evil.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		err = validateRedirectPaths(f, workDir, readPaths, writePaths)
+		if err == nil {
+			t.Fatal("expected output redirect to read-only path to be blocked")
+		}
+		if !strings.Contains(err.Error(), "outside allowed directories") {
+			t.Fatalf("expected outside allowed directories error, got %q", err.Error())
+		}
+	})
+
+	t.Run("append redirect to read-only path blocked", func(t *testing.T) {
+		f, err := ParseBash("echo hello >> " + extraReadDir + "/evil.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		err = validateRedirectPaths(f, workDir, readPaths, writePaths)
+		if err == nil {
+			t.Fatal("expected append redirect to read-only path to be blocked")
+		}
+	})
+
+	t.Run("output redirect to write path allowed", func(t *testing.T) {
+		f, err := ParseBash("echo hello > " + workDir + "/output.txt")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if err := validateRedirectPaths(f, workDir, readPaths, writePaths); err != nil {
+			t.Fatalf("expected output redirect to write path to be allowed, got: %v", err)
+		}
+	})
+}
+
+func TestBashSandboxed_ReadWriteSeparation_Integration(t *testing.T) {
+	workDir := t.TempDir()
+	extraReadDir := t.TempDir()
+
+	os.WriteFile(filepath.Join(extraReadDir, "readable.txt"), []byte("hello\n"), 0o644)
+
+	readPaths := []string{workDir, extraReadDir}
+	writePaths := []string{workDir}
+
+	s := NewSandbox()
+
+	t.Run("cat file in read-only path", func(t *testing.T) {
+		out, err := s.Execute(context.Background(), "cat "+extraReadDir+"/readable.txt", workDir, readPaths, writePaths)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out != "hello\n" {
+			t.Fatalf("expected 'hello\\n', got %q", out)
+		}
+	})
+
+	t.Run("grep in read-only path", func(t *testing.T) {
+		out, err := s.Execute(context.Background(), "grep hello "+extraReadDir+"/readable.txt", workDir, readPaths, writePaths)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(out, "hello") {
+			t.Fatalf("expected output to contain 'hello', got %q", out)
+		}
+	})
+
+	t.Run("cp to read-only path blocked", func(t *testing.T) {
+		os.WriteFile(filepath.Join(workDir, "src.txt"), []byte("data"), 0o644)
+		_, err := s.Execute(context.Background(), "cp "+workDir+"/src.txt "+extraReadDir+"/evil.txt", workDir, readPaths, writePaths)
+		if err == nil {
+			t.Fatal("expected error for cp targeting read-only path")
+		}
+		if !strings.Contains(err.Error(), "outside allowed directories") {
+			t.Fatalf("expected outside allowed directories error, got %q", err.Error())
+		}
+	})
+
+	t.Run("touch in read-only path blocked", func(t *testing.T) {
+		_, err := s.Execute(context.Background(), "touch "+extraReadDir+"/evil.txt", workDir, readPaths, writePaths)
+		if err == nil {
+			t.Fatal("expected error for touch targeting read-only path")
+		}
+	})
+
+	t.Run("input redirect from read-only path allowed", func(t *testing.T) {
+		out, err := s.Execute(context.Background(), "cat < "+extraReadDir+"/readable.txt", workDir, readPaths, writePaths)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out != "hello\n" {
+			t.Fatalf("expected 'hello\\n', got %q", out)
+		}
+	})
+
+	t.Run("output redirect to read-only path blocked", func(t *testing.T) {
+		_, err := s.Execute(context.Background(), "echo evil > "+extraReadDir+"/evil.txt", workDir, readPaths, writePaths)
+		if err == nil {
+			t.Fatal("expected error for output redirect to read-only path")
+		}
+	})
 }
