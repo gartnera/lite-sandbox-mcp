@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"os"
 	"os/exec"
+	"sync"
 	"testing"
 	"time"
 )
@@ -17,13 +18,17 @@ type workerTestResult struct {
 	err      string
 }
 
-// readWorkerResult reads WorkerMsg messages from dec until WorkerMsgDone.
-func readWorkerResult(dec *gob.Decoder) (workerTestResult, error) {
+// readWorkerResult reads WorkerMsg messages from dec until WorkerMsgDone for the given ID.
+// Messages for other IDs are skipped (for sequential tests where only one exec is in flight).
+func readWorkerResult(dec *gob.Decoder, id uint64) (workerTestResult, error) {
 	var res workerTestResult
 	for {
 		var msg WorkerMsg
 		if err := dec.Decode(&msg); err != nil {
 			return res, err
+		}
+		if msg.ID != id {
+			continue
 		}
 		switch msg.Type {
 		case WorkerMsgStdout:
@@ -39,14 +44,14 @@ func readWorkerResult(dec *gob.Decoder) (workerTestResult, error) {
 }
 
 // sendExec sends a HostMsgExec followed by HostMsgStdinEOF (no stdin data).
-func sendExec(enc *gob.Encoder, buf *bufio.Writer, args []string, dir string) error {
-	if err := enc.Encode(HostMsg{Type: HostMsgExec, Args: args, Dir: dir, Env: map[string]string{}}); err != nil {
+func sendExec(enc *gob.Encoder, buf *bufio.Writer, id uint64, args []string, dir string) error {
+	if err := enc.Encode(HostMsg{ID: id, Type: HostMsgExec, Args: args, Dir: dir, Env: map[string]string{}}); err != nil {
 		return err
 	}
 	if err := buf.Flush(); err != nil {
 		return err
 	}
-	if err := enc.Encode(HostMsg{Type: HostMsgStdinEOF}); err != nil {
+	if err := enc.Encode(HostMsg{ID: id, Type: HostMsgStdinEOF}); err != nil {
 		return err
 	}
 	return buf.Flush()
@@ -99,7 +104,7 @@ func TestWorkerIPCWithoutBwrap(t *testing.T) {
 
 	// Send a simple command
 	t.Log("sending command")
-	if err := sendExec(enc, bufStdin, []string{"echo", "hello"}, t.TempDir()); err != nil {
+	if err := sendExec(enc, bufStdin, 1, []string{"echo", "hello"}, t.TempDir()); err != nil {
 		t.Fatalf("failed to send exec: %v", err)
 	}
 
@@ -111,7 +116,7 @@ func TestWorkerIPCWithoutBwrap(t *testing.T) {
 	}
 	ch := make(chan resultOrErr, 1)
 	go func() {
-		res, err := readWorkerResult(dec)
+		res, err := readWorkerResult(dec, 1)
 		ch <- resultOrErr{res, err}
 	}()
 
@@ -176,22 +181,23 @@ func TestWorkerIPCMultipleCommands(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// Send multiple commands
+	// Send multiple commands sequentially
 	testCases := []struct {
+		id       uint64
 		args     []string
 		expected string
 	}{
-		{[]string{"echo", "first"}, "first\n"},
-		{[]string{"echo", "second"}, "second\n"},
-		{[]string{"echo", "third"}, "third\n"},
+		{1, []string{"echo", "first"}, "first\n"},
+		{2, []string{"echo", "second"}, "second\n"},
+		{3, []string{"echo", "third"}, "third\n"},
 	}
 
 	for i, tc := range testCases {
-		if err := sendExec(enc, bufStdin, tc.args, tmpDir); err != nil {
+		if err := sendExec(enc, bufStdin, tc.id, tc.args, tmpDir); err != nil {
 			t.Fatalf("failed to send exec %d: %v", i, err)
 		}
 
-		res, err := readWorkerResult(dec)
+		res, err := readWorkerResult(dec, tc.id)
 		if err != nil {
 			t.Fatalf("failed to read result %d: %v", i, err)
 		}
@@ -248,9 +254,10 @@ func TestWorkerIPCWithStdin(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
+	const execID uint64 = 1
 
 	// Send exec for "cat" which reads stdin and writes to stdout
-	if err := enc.Encode(HostMsg{Type: HostMsgExec, Args: []string{"cat"}, Dir: tmpDir, Env: map[string]string{}}); err != nil {
+	if err := enc.Encode(HostMsg{ID: execID, Type: HostMsgExec, Args: []string{"cat"}, Dir: tmpDir, Env: map[string]string{}}); err != nil {
 		t.Fatalf("failed to encode exec: %v", err)
 	}
 	if err := bufStdin.Flush(); err != nil {
@@ -259,7 +266,7 @@ func TestWorkerIPCWithStdin(t *testing.T) {
 
 	// Stream stdin data in chunks
 	for _, line := range []string{"hello\n", "world\n"} {
-		if err := enc.Encode(HostMsg{Type: HostMsgStdin, Data: []byte(line)}); err != nil {
+		if err := enc.Encode(HostMsg{ID: execID, Type: HostMsgStdin, Data: []byte(line)}); err != nil {
 			t.Fatalf("failed to encode stdin chunk: %v", err)
 		}
 		if err := bufStdin.Flush(); err != nil {
@@ -268,7 +275,7 @@ func TestWorkerIPCWithStdin(t *testing.T) {
 	}
 
 	// Send stdin EOF
-	if err := enc.Encode(HostMsg{Type: HostMsgStdinEOF}); err != nil {
+	if err := enc.Encode(HostMsg{ID: execID, Type: HostMsgStdinEOF}); err != nil {
 		t.Fatalf("failed to encode stdin EOF: %v", err)
 	}
 	if err := bufStdin.Flush(); err != nil {
@@ -282,7 +289,7 @@ func TestWorkerIPCWithStdin(t *testing.T) {
 	}
 	ch := make(chan resultOrErr, 1)
 	go func() {
-		res, err := readWorkerResult(dec)
+		res, err := readWorkerResult(dec, execID)
 		ch <- resultOrErr{res, err}
 	}()
 
@@ -300,4 +307,123 @@ func TestWorkerIPCWithStdin(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for response")
 	}
+}
+
+// TestWorkerIPCConcurrent tests that multiple executions can run concurrently on a single worker.
+func TestWorkerIPCConcurrent(t *testing.T) {
+	binary := "../lite-sandbox"
+	if _, err := os.Stat(binary); os.IsNotExist(err) {
+		t.Skipf("lite-sandbox binary not found at %s, skipping test (run 'go build' first)", binary)
+	}
+
+	cmd := exec.Command(binary, "sandbox-worker")
+	cmd.Stderr = os.Stderr
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("failed to create stdin pipe: %v", err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("failed to create stdout pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start worker: %v", err)
+	}
+	defer cmd.Process.Kill()
+
+	bufStdin := bufio.NewWriter(stdin)
+	bufStdout := bufio.NewReader(stdout)
+	enc := gob.NewEncoder(bufStdin)
+	dec := gob.NewDecoder(bufStdout)
+
+	// Wait for ready signal
+	var ready WorkerMsg
+	if err := dec.Decode(&ready); err != nil {
+		t.Fatalf("failed to receive ready signal: %v", err)
+	}
+	if ready.Type != WorkerMsgReady {
+		t.Fatalf("expected WorkerMsgReady, got type %d", ready.Type)
+	}
+
+	tmpDir := t.TempDir()
+
+	// Send 3 execs without waiting for any results.
+	execIDs := []uint64{10, 20, 30}
+	for _, id := range execIDs {
+		if err := sendExec(enc, bufStdin, id, []string{"echo", "hello"}, tmpDir); err != nil {
+			t.Fatalf("failed to send exec %d: %v", id, err)
+		}
+	}
+
+	// Collect results for all IDs concurrently by reading in a demuxing goroutine.
+	type resultOrErr struct {
+		res workerTestResult
+		err error
+	}
+	resultChans := make(map[uint64]chan resultOrErr)
+	for _, id := range execIDs {
+		resultChans[id] = make(chan resultOrErr, 1)
+	}
+
+	// Demux: read all messages and route by ID.
+	var demuxWg sync.WaitGroup
+	demuxWg.Add(1)
+	go func() {
+		defer demuxWg.Done()
+		pending := make(map[uint64]workerTestResult)
+		remaining := len(execIDs)
+		for remaining > 0 {
+			var msg WorkerMsg
+			if err := dec.Decode(&msg); err != nil {
+				// Send error to all remaining channels
+				for _, id := range execIDs {
+					if _, done := pending[id]; !done {
+						resultChans[id] <- resultOrErr{err: err}
+					}
+				}
+				return
+			}
+			r := pending[msg.ID]
+			switch msg.Type {
+			case WorkerMsgStdout:
+				r.stdout = append(r.stdout, msg.Data...)
+			case WorkerMsgStderr:
+				r.stderr = append(r.stderr, msg.Data...)
+			case WorkerMsgDone:
+				r.exitCode = msg.ExitCode
+				r.err = msg.Error
+				resultChans[msg.ID] <- resultOrErr{res: r}
+				remaining--
+				continue
+			}
+			pending[msg.ID] = r
+		}
+	}()
+
+	// Verify results for each exec.
+	for _, id := range execIDs {
+		select {
+		case r := <-resultChans[id]:
+			if r.err != nil {
+				t.Errorf("exec %d: error: %v", id, r.err)
+				continue
+			}
+			if r.res.err != "" {
+				t.Errorf("exec %d: command error: %s", id, r.res.err)
+			}
+			if r.res.exitCode != 0 {
+				t.Errorf("exec %d: unexpected exit code %d", id, r.res.exitCode)
+			}
+			if string(r.res.stdout) != "hello\n" {
+				t.Errorf("exec %d: got %q, want %q", id, r.res.stdout, "hello\n")
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timeout waiting for result of exec %d", id)
+		}
+	}
+
+	demuxWg.Wait()
 }

@@ -21,10 +21,8 @@ func TestOSSandboxBasicExecution(t *testing.T) {
 
 	// Enable OS sandbox
 	enabled := true
-	workers := 2
 	cfg := &config.Config{
-		OSSandbox:        &enabled,
-		OSSandboxWorkers: &workers,
+		OSSandbox: &enabled,
 	}
 	s.UpdateConfig(cfg, tmpDir)
 	defer s.Close()
@@ -83,10 +81,8 @@ func TestOSSandboxWorkerPool(t *testing.T) {
 	s := NewSandbox()
 
 	enabled := true
-	workers := 3
 	cfg := &config.Config{
-		OSSandbox:        &enabled,
-		OSSandboxWorkers: &workers,
+		OSSandbox: &enabled,
 	}
 	s.UpdateConfig(cfg, tmpDir)
 	defer s.Close()

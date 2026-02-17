@@ -29,7 +29,10 @@ type Sandbox struct {
 	imdsEndpoint     string
 	runtimeReadPaths []string
 	osSandbox        bool
-	pool             *os_sandbox.WorkerPool
+	worker           *os_sandbox.Worker
+	workerWorkDir    string
+	workerRuntimeBinds []string
+	workerBlockAWS   bool
 	// argValidators holds a reference to commandArgValidators so that
 	// validateSubCommand can look up per-command validators at runtime
 	// without creating a package-level initialization cycle.
@@ -60,24 +63,24 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 	s.awsConfig = cfg.AWS
 	s.runtimeReadPaths = runtimeReadPaths
 
+	// Store worker config for lazy start / restart.
+	s.workerWorkDir = workDir
+	s.workerRuntimeBinds = runtimeReadPaths
+	s.workerBlockAWS = blockAWSCredentials
+
 	// Handle OS sandbox enable/disable
 	newOSSandbox := cfg.OSSandboxEnabled()
 	if newOSSandbox != s.osSandbox {
 		// OS sandbox setting changed
-		if s.pool != nil {
-			slog.Info("closing existing worker pool")
-			s.pool.Close()
-			s.pool = nil
+		if s.worker != nil {
+			slog.Info("closing existing worker")
+			s.worker.Close()
+			s.worker = nil
 		}
 		if newOSSandbox {
-			slog.Info("enabling OS sandbox", "workers", cfg.OSSandboxWorkersCount(), "block_aws_credentials", blockAWSCredentials)
-			s.pool = os_sandbox.NewWorkerPool(cfg.OSSandboxWorkersCount(), workDir, runtimeReadPaths, blockAWSCredentials)
+			slog.Info("enabling OS sandbox", "block_aws_credentials", blockAWSCredentials)
 		}
 		s.osSandbox = newOSSandbox
-	} else if newOSSandbox && s.pool != nil {
-		// OS sandbox is enabled but worker count may have changed
-		// For now, we don't dynamically resize the pool
-		// Could be enhanced in the future
 	}
 	s.mu.Unlock()
 }
@@ -138,13 +141,13 @@ func (s *Sandbox) RuntimeReadPaths() []string {
 	return s.runtimeReadPaths
 }
 
-// Close shuts down the sandbox, closing any worker pool.
+// Close shuts down the sandbox, closing the worker if running.
 func (s *Sandbox) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.pool != nil {
-		return s.pool.Close()
+	if s.worker != nil {
+		return s.worker.Close()
 	}
 	return nil
 }
@@ -353,11 +356,10 @@ func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, r
 }
 
 // executeWithInterp executes the parsed command using interp.
-// If OS sandbox is enabled, ExecHandler delegates to worker pool.
+// If OS sandbox is enabled, ExecHandler delegates to the worker.
 func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir string, readAllowedPaths, writeAllowedPaths []string) (string, error) {
 	s.mu.RLock()
 	useOSSandbox := s.osSandbox
-	pool := s.pool
 	imdsEndpoint := s.imdsEndpoint
 	s.mu.RUnlock()
 
@@ -394,10 +396,10 @@ func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir
 		}),
 	}
 
-	// If OS sandbox enabled, use custom ExecHandler to delegate to worker
-	if useOSSandbox && pool != nil {
+	// If OS sandbox enabled, use custom ExecHandler to delegate to single worker.
+	if useOSSandbox {
 		opts = append(opts, interp.ExecHandler(func(ctx context.Context, args []string) error {
-			return s.execInWorker(ctx, args, pool)
+			return s.execInWorker(ctx, args)
 		}))
 	}
 
@@ -414,13 +416,12 @@ func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir
 	return output, nil
 }
 
-// execInWorker sends a command to the worker pool for execution in bwrap.
-func (s *Sandbox) execInWorker(ctx context.Context, args []string, pool *os_sandbox.WorkerPool) error {
-	w, err := pool.Acquire()
+// execInWorker sends a command to the worker for execution in the OS sandbox.
+func (s *Sandbox) execInWorker(ctx context.Context, args []string) error {
+	w, err := s.getOrCreateWorker()
 	if err != nil {
-		return fmt.Errorf("failed to acquire worker: %w", err)
+		return fmt.Errorf("failed to get worker: %w", err)
 	}
-	defer pool.Release(w)
 
 	hc := interp.HandlerCtx(ctx)
 
@@ -444,4 +445,23 @@ func (s *Sandbox) execInWorker(ctx context.Context, args []string, pool *os_sand
 	}
 
 	return nil
+}
+
+// getOrCreateWorker returns the current worker, starting a new one if the worker
+// is nil or dead. Must be called without holding s.mu.
+func (s *Sandbox) getOrCreateWorker() (*os_sandbox.Worker, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.worker != nil && !s.worker.IsDead() {
+		return s.worker, nil
+	}
+
+	slog.Info("starting new sandbox worker", "workDir", s.workerWorkDir, "blockAWS", s.workerBlockAWS)
+	w, err := os_sandbox.StartWorker(context.Background(), s.workerWorkDir, s.workerRuntimeBinds, s.workerBlockAWS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start worker: %w", err)
+	}
+	s.worker = w
+	return w, nil
 }

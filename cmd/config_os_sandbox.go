@@ -21,9 +21,6 @@ var configOSSandboxShowCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("OS Sandbox: %v\n", cfg.OSSandboxEnabled())
-		if cfg.OSSandboxEnabled() {
-			fmt.Printf("Workers: %d\n", cfg.OSSandboxWorkersCount())
-		}
 		return nil
 	},
 }

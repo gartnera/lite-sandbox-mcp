@@ -36,7 +36,8 @@ func (le *lockedEncoder) send(msg WorkerMsg) error {
 }
 
 // RunWorker is the main loop for a sandbox worker process (runs inside bwrap/sandbox-exec).
-// It reads HostMsg messages from stdin and streams stdout/stderr WorkerMsg messages back.
+// It reads HostMsg messages from stdin and dispatches them to concurrent executions.
+// Multiple executions may be in flight simultaneously, identified by their ID.
 // This is called by the "sandbox-worker" CLI command.
 func RunWorker() error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -53,6 +54,10 @@ func RunWorker() error {
 		return fmt.Errorf("failed to send ready signal: %w", err)
 	}
 
+	// stdinPipes maps execution ID to the pipe writer feeding that execution's stdin.
+	stdinPipes := make(map[uint64]*io.PipeWriter)
+	var stdinMu sync.Mutex
+
 	for {
 		var msg HostMsg
 		if err := dec.Decode(&msg); err != nil {
@@ -63,23 +68,58 @@ func RunWorker() error {
 			return fmt.Errorf("failed to decode host message: %w", err)
 		}
 
-		if msg.Type != HostMsgExec {
-			return fmt.Errorf("expected HostMsgExec, got type %d", msg.Type)
-		}
+		switch msg.Type {
+		case HostMsgExec:
+			slog.Info("executing command", "args", msg.Args, "dir", msg.Dir, "id", msg.ID)
+			pr, pw := io.Pipe()
+			stdinMu.Lock()
+			stdinPipes[msg.ID] = pw
+			stdinMu.Unlock()
+			go func(m HostMsg, stdinReader io.Reader) {
+				if err := streamCommand(enc, m.ID, m, stdinReader); err != nil {
+					slog.Error("streamCommand error", "id", m.ID, "error", err)
+				}
+				// Clean up: close and remove the pipe writer if still present.
+				stdinMu.Lock()
+				if pw, ok := stdinPipes[m.ID]; ok {
+					pw.Close()
+					delete(stdinPipes, m.ID)
+				}
+				stdinMu.Unlock()
+			}(msg, pr)
 
-		slog.Info("executing command", "args", msg.Args, "dir", msg.Dir)
+		case HostMsgStdin:
+			stdinMu.Lock()
+			pw, ok := stdinPipes[msg.ID]
+			stdinMu.Unlock()
+			if ok && len(msg.Data) > 0 {
+				pw.Write(msg.Data) // ignore error; command may have closed stdin early
+			}
 
-		if err := streamCommand(enc, dec, msg); err != nil {
-			return err
+		case HostMsgStdinEOF:
+			stdinMu.Lock()
+			pw, ok := stdinPipes[msg.ID]
+			if ok {
+				delete(stdinPipes, msg.ID)
+			}
+			stdinMu.Unlock()
+			if ok {
+				pw.Close()
+			}
+
+		default:
+			slog.Error("unexpected message type", "type", msg.Type)
+			return fmt.Errorf("unexpected message type %d", msg.Type)
 		}
 	}
 }
 
-// streamCommand starts the command described by req, streams stdin from the decoder,
+// streamCommand starts the command described by req, uses stdinReader for its stdin,
 // and streams stdout/stderr back via the encoder. Sends WorkerMsgDone when finished.
-func streamCommand(enc *lockedEncoder, dec *gob.Decoder, req HostMsg) error {
+// The id parameter is included in all outgoing WorkerMsg messages for multiplexing.
+func streamCommand(enc *lockedEncoder, id uint64, req HostMsg, stdinReader io.Reader) error {
 	if len(req.Args) == 0 {
-		return enc.send(WorkerMsg{Type: WorkerMsgDone, ExitCode: 1, Error: "no command specified"})
+		return enc.send(WorkerMsg{ID: id, Type: WorkerMsgDone, ExitCode: 1, Error: "no command specified"})
 	}
 
 	cmd := exec.Command(req.Args[0], req.Args[1:]...)
@@ -93,61 +133,25 @@ func streamCommand(enc *lockedEncoder, dec *gob.Decoder, req HostMsg) error {
 		cmd.Env = env
 	}
 
-	// Wire stdin through an io.Pipe so the decoder goroutine can feed it.
-	pr, pw := io.Pipe()
-	cmd.Stdin = pr
+	cmd.Stdin = stdinReader
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		pr.Close()
-		pw.Close()
-		return enc.send(WorkerMsg{Type: WorkerMsgDone, ExitCode: 1, Error: "failed to create stdout pipe: " + err.Error()})
+		return enc.send(WorkerMsg{ID: id, Type: WorkerMsgDone, ExitCode: 1, Error: "failed to create stdout pipe: " + err.Error()})
 	}
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		pr.Close()
-		pw.Close()
-		return enc.send(WorkerMsg{Type: WorkerMsgDone, ExitCode: 1, Error: "failed to create stderr pipe: " + err.Error()})
+		return enc.send(WorkerMsg{ID: id, Type: WorkerMsgDone, ExitCode: 1, Error: "failed to create stderr pipe: " + err.Error()})
 	}
 
 	if err := cmd.Start(); err != nil {
-		pr.Close()
-		pw.Close()
-		return enc.send(WorkerMsg{Type: WorkerMsgDone, ExitCode: 1, Error: "failed to start command: " + err.Error()})
+		return enc.send(WorkerMsg{ID: id, Type: WorkerMsgDone, ExitCode: 1, Error: "failed to start command: " + err.Error()})
 	}
 
 	var wg sync.WaitGroup
 
-	// Goroutine 1: receive stdin chunks from host decoder and write to command's stdin pipe.
-	// This is the only consumer of dec until HostMsgStdinEOF is received.
-	// RunWorker will not call dec.Decode again until streamCommand returns (after wg.Wait).
-	wg.Go(func() {
-		defer pw.Close()
-		for {
-			var stdinMsg HostMsg
-			if err := dec.Decode(&stdinMsg); err != nil {
-				slog.Error("failed to decode stdin message", "error", err)
-				return
-			}
-			switch stdinMsg.Type {
-			case HostMsgStdin:
-				if len(stdinMsg.Data) > 0 {
-					if _, err := pw.Write(stdinMsg.Data); err != nil {
-						// Command closed stdin early (e.g. head -1) — that's fine
-						return
-					}
-				}
-			case HostMsgStdinEOF:
-				return // pw closed via defer
-			default:
-				slog.Error("unexpected message type while reading stdin", "type", stdinMsg.Type)
-				return
-			}
-		}
-	})
-
-	// Goroutine 2: stream stdout chunks to host.
+	// Goroutine 1: stream stdout chunks to host.
 	wg.Go(func() {
 		buf := make([]byte, 4096)
 		for {
@@ -155,7 +159,7 @@ func streamCommand(enc *lockedEncoder, dec *gob.Decoder, req HostMsg) error {
 			if n > 0 {
 				chunk := make([]byte, n)
 				copy(chunk, buf[:n])
-				if encErr := enc.send(WorkerMsg{Type: WorkerMsgStdout, Data: chunk}); encErr != nil {
+				if encErr := enc.send(WorkerMsg{ID: id, Type: WorkerMsgStdout, Data: chunk}); encErr != nil {
 					slog.Error("failed to send stdout chunk", "error", encErr)
 					return
 				}
@@ -166,7 +170,7 @@ func streamCommand(enc *lockedEncoder, dec *gob.Decoder, req HostMsg) error {
 		}
 	})
 
-	// Goroutine 3: stream stderr chunks to host.
+	// Goroutine 2: stream stderr chunks to host.
 	wg.Go(func() {
 		buf := make([]byte, 4096)
 		for {
@@ -174,7 +178,7 @@ func streamCommand(enc *lockedEncoder, dec *gob.Decoder, req HostMsg) error {
 			if n > 0 {
 				chunk := make([]byte, n)
 				copy(chunk, buf[:n])
-				if encErr := enc.send(WorkerMsg{Type: WorkerMsgStderr, Data: chunk}); encErr != nil {
+				if encErr := enc.send(WorkerMsg{ID: id, Type: WorkerMsgStderr, Data: chunk}); encErr != nil {
 					slog.Error("failed to send stderr chunk", "error", encErr)
 					return
 				}
@@ -199,5 +203,5 @@ func streamCommand(enc *lockedEncoder, dec *gob.Decoder, req HostMsg) error {
 		}
 	}
 
-	return enc.send(WorkerMsg{Type: WorkerMsgDone, ExitCode: exitCode, Error: errStr})
+	return enc.send(WorkerMsg{ID: id, Type: WorkerMsgDone, ExitCode: exitCode, Error: errStr})
 }

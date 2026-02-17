@@ -26,6 +26,7 @@ const (
 
 // HostMsg is a message sent from the MCP server to a worker process.
 type HostMsg struct {
+	ID   uint64
 	Type HostMsgType
 	Args []string          // For HostMsgExec
 	Dir  string            // For HostMsgExec
@@ -45,22 +46,49 @@ const (
 
 // WorkerMsg is a message sent from a worker process back to the MCP server.
 type WorkerMsg struct {
+	ID       uint64
 	Type     WorkerMsgType
 	Data     []byte
 	ExitCode int
 	Error    string
 }
 
+// hostLockedEncoder wraps a gob.Encoder with a mutex and buffered writer for concurrent HostMsg sends.
+type hostLockedEncoder struct {
+	mu  sync.Mutex
+	buf *bufio.Writer
+	enc *gob.Encoder
+}
+
+func newHostLockedEncoder(w io.Writer) *hostLockedEncoder {
+	buf := bufio.NewWriter(w)
+	return &hostLockedEncoder{buf: buf, enc: gob.NewEncoder(buf)}
+}
+
+func (e *hostLockedEncoder) send(msg HostMsg) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err := e.enc.Encode(msg); err != nil {
+		return err
+	}
+	return e.buf.Flush()
+}
+
 // Worker manages a single bwrap sandbox process communicating via gob over stdin/stdout.
+// It supports multiplexed concurrent executions via per-execution IDs.
 type Worker struct {
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	stdout    io.ReadCloser
-	bufStdin  *bufio.Writer
-	enc       *gob.Encoder
-	dec       *gob.Decoder
-	mu        sync.Mutex
-	dead      bool
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout io.ReadCloser
+	enc    *hostLockedEncoder
+	dec    *gob.Decoder
+
+	mu   sync.Mutex
+	dead bool
+
+	nextID    uint64
+	pending   map[uint64]chan WorkerMsg
+	pendingMu sync.Mutex
 }
 
 // StartWorker starts a new sandbox worker process.
@@ -210,17 +238,15 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string, block
 
 	slog.InfoContext(ctx, "started sandbox worker", "platform", runtime.GOOS, "pid", cmd.Process.Pid)
 
-	// Use buffered I/O for gob streams
-	bufStdin := bufio.NewWriter(stdin)
 	bufStdout := bufio.NewReader(stdout)
 
 	w := &Worker{
-		cmd:      cmd,
-		stdin:    stdin,
-		stdout:   stdout,
-		bufStdin: bufStdin,
-		enc:      gob.NewEncoder(bufStdin),
-		dec:      gob.NewDecoder(bufStdout),
+		cmd:     cmd,
+		stdin:   stdin,
+		stdout:  stdout,
+		enc:     newHostLockedEncoder(stdin),
+		dec:     gob.NewDecoder(bufStdout),
+		pending: make(map[uint64]chan WorkerMsg),
 	}
 
 	// Wait for ready signal from worker
@@ -235,6 +261,9 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string, block
 	}
 
 	slog.InfoContext(ctx, "worker ready", "pid", cmd.Process.Pid)
+
+	// Start the dispatcher goroutine to route incoming messages to pending executions.
+	go w.runDispatcher()
 
 	return w, nil
 }
@@ -316,6 +345,7 @@ func generateSBPLProfile(workDir string, extraBinds []string, blockAWSCredential
 }
 
 // Exec runs a command in the worker, streaming stdin/stdout/stderr.
+// Multiple Exec calls may run concurrently; each gets a unique ID for multiplexing.
 // stdin, stdout, stderr may be nil.
 // Returns the command exit code and any protocol error.
 func (w *Worker) Exec(ctx context.Context, args []string, dir string, env map[string]string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
@@ -329,84 +359,39 @@ func (w *Worker) Exec(ctx context.Context, args []string, dir string, env map[st
 		w.mu.Unlock()
 		return 1, fmt.Errorf("worker process has exited")
 	}
+	w.mu.Unlock()
 
-	slog.DebugContext(ctx, "sending exec to worker", "args", args)
+	// Generate unique ID and register a response channel.
+	w.pendingMu.Lock()
+	id := w.nextID
+	w.nextID++
+	ch := make(chan WorkerMsg, 64)
+	w.pending[id] = ch
+	w.pendingMu.Unlock()
 
-	// Send exec message while holding the lock to prevent concurrent Exec calls.
-	if err := w.enc.Encode(HostMsg{Type: HostMsgExec, Args: args, Dir: dir, Env: env}); err != nil {
+	slog.DebugContext(ctx, "sending exec to worker", "args", args, "id", id)
+
+	// Send exec message via locked encoder (safe for concurrent callers).
+	if err := w.enc.send(HostMsg{ID: id, Type: HostMsgExec, Args: args, Dir: dir, Env: env}); err != nil {
+		w.pendingMu.Lock()
+		delete(w.pending, id)
+		w.pendingMu.Unlock()
+		w.mu.Lock()
 		w.dead = true
 		w.mu.Unlock()
 		return 1, fmt.Errorf("failed to send exec: %w", err)
 	}
-	if err := w.bufStdin.Flush(); err != nil {
-		w.dead = true
-		w.mu.Unlock()
-		return 1, fmt.Errorf("failed to flush exec: %w", err)
-	}
-	w.mu.Unlock()
 
-	// Pump stdin in a background goroutine; pumpStdin is the only writer after this point.
+	// Pump stdin in a background goroutine.
 	stdinDone := make(chan error, 1)
 	go func() {
-		stdinDone <- w.pumpStdin(stdin)
+		stdinDone <- w.pumpStdinForID(id, stdin)
 	}()
 
-	// Read stdout/stderr/done messages until command finishes.
-	exitCode, execErr := w.readWorkerOutput(stdout, stderr)
-
-	// Wait for stdin pump.
-	if pumpErr := <-stdinDone; pumpErr != nil && execErr == nil {
-		execErr = pumpErr
-	}
-
-	if execErr != nil {
-		w.mu.Lock()
-		w.dead = true
-		w.mu.Unlock()
-	}
-
-	return exitCode, execErr
-}
-
-// pumpStdin reads from r in 4096-byte chunks and sends them to the worker,
-// then sends HostMsgStdinEOF. If r is nil, only the EOF is sent.
-func (w *Worker) pumpStdin(r io.Reader) error {
-	if r != nil {
-		buf := make([]byte, 4096)
-		for {
-			n, err := r.Read(buf)
-			if n > 0 {
-				chunk := make([]byte, n)
-				copy(chunk, buf[:n])
-				if encErr := w.enc.Encode(HostMsg{Type: HostMsgStdin, Data: chunk}); encErr != nil {
-					return fmt.Errorf("failed to send stdin chunk: %w", encErr)
-				}
-				if flushErr := w.bufStdin.Flush(); flushErr != nil {
-					return fmt.Errorf("failed to flush stdin chunk: %w", flushErr)
-				}
-			}
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return fmt.Errorf("stdin read error: %w", err)
-			}
-		}
-	}
-	if err := w.enc.Encode(HostMsg{Type: HostMsgStdinEOF}); err != nil {
-		return fmt.Errorf("failed to send stdin EOF: %w", err)
-	}
-	return w.bufStdin.Flush()
-}
-
-// readWorkerOutput reads WorkerMsg messages until WorkerMsgDone,
-// writing stdout/stderr chunks to the provided writers.
-func (w *Worker) readWorkerOutput(stdout, stderr io.Writer) (int, error) {
-	for {
-		var msg WorkerMsg
-		if err := w.dec.Decode(&msg); err != nil {
-			return 1, fmt.Errorf("failed to decode worker message: %w", err)
-		}
+	// Read responses from the per-execution channel until WorkerMsgDone (channel closed by dispatcher).
+	var exitCode int
+	var execErr error
+	for msg := range ch {
 		switch msg.Type {
 		case WorkerMsgStdout:
 			if stdout != nil && len(msg.Data) > 0 {
@@ -417,13 +402,83 @@ func (w *Worker) readWorkerOutput(stdout, stderr io.Writer) (int, error) {
 				stderr.Write(msg.Data) //nolint:errcheck
 			}
 		case WorkerMsgDone:
-			var err error
+			exitCode = msg.ExitCode
 			if msg.Error != "" {
-				err = fmt.Errorf("%s", msg.Error)
+				execErr = fmt.Errorf("%s", msg.Error)
 			}
-			return msg.ExitCode, err
-		default:
-			return 1, fmt.Errorf("unexpected worker message type: %d", msg.Type)
+		}
+	}
+
+	// Wait for stdin pump to finish.
+	if pumpErr := <-stdinDone; pumpErr != nil && execErr == nil {
+		execErr = pumpErr
+	}
+
+	return exitCode, execErr
+}
+
+// pumpStdinForID reads from r in 4096-byte chunks and sends them to the worker with the given ID,
+// then sends HostMsgStdinEOF. If r is nil, only the EOF is sent.
+func (w *Worker) pumpStdinForID(id uint64, r io.Reader) error {
+	if r != nil {
+		buf := make([]byte, 4096)
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				if encErr := w.enc.send(HostMsg{ID: id, Type: HostMsgStdin, Data: chunk}); encErr != nil {
+					return fmt.Errorf("failed to send stdin chunk: %w", encErr)
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("stdin read error: %w", err)
+			}
+		}
+	}
+	if err := w.enc.send(HostMsg{ID: id, Type: HostMsgStdinEOF}); err != nil {
+		return fmt.Errorf("failed to send stdin EOF: %w", err)
+	}
+	return nil
+}
+
+// runDispatcher continuously reads WorkerMsg from the decoder and routes each message
+// to the appropriate pending execution channel. On decode error, all pending channels
+// receive a synthetic done-with-error message and are closed.
+func (w *Worker) runDispatcher() {
+	for {
+		var msg WorkerMsg
+		if err := w.dec.Decode(&msg); err != nil {
+			w.mu.Lock()
+			w.dead = true
+			w.mu.Unlock()
+
+			// Drain all pending channels with a synthetic error.
+			w.pendingMu.Lock()
+			for _, ch := range w.pending {
+				ch <- WorkerMsg{Type: WorkerMsgDone, ExitCode: 1, Error: "worker connection lost: " + err.Error()}
+				close(ch)
+			}
+			w.pending = make(map[uint64]chan WorkerMsg)
+			w.pendingMu.Unlock()
+			return
+		}
+
+		w.pendingMu.Lock()
+		ch, ok := w.pending[msg.ID]
+		if ok && msg.Type == WorkerMsgDone {
+			delete(w.pending, msg.ID)
+		}
+		w.pendingMu.Unlock()
+
+		if ok {
+			ch <- msg
+			if msg.Type == WorkerMsgDone {
+				close(ch)
+			}
 		}
 	}
 }
@@ -456,119 +511,4 @@ func (w *Worker) IsDead() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.dead
-}
-
-// WorkerPool manages a pool of bwrap worker processes.
-type WorkerPool struct {
-	size                int
-	workDir             string
-	runtimeBinds        []string // Additional bind mounts for runtime paths (Go, etc.)
-	blockAWSCredentials bool     // Whether to block ~/.aws directory (always blocks ~/.ssh)
-	workers             chan *Worker
-	mu                  sync.Mutex
-	started             int
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	closeOnce           sync.Once
-}
-
-// NewWorkerPool creates a new worker pool with the specified size.
-// Workers are created lazily on demand.
-// extraBinds specifies additional writable paths to bind mount (e.g., for runtimes).
-// blockAWSCredentials specifies whether to block ~/.aws directory.
-// Note: ~/.ssh is ALWAYS blocked regardless of this parameter.
-func NewWorkerPool(size int, workDir string, extraBinds []string, blockAWSCredentials bool) *WorkerPool {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	return &WorkerPool{
-		size:                size,
-		workDir:             workDir,
-		runtimeBinds:        extraBinds,
-		blockAWSCredentials: blockAWSCredentials,
-		workers:             make(chan *Worker, size),
-		ctx:                 ctx,
-		cancel:              cancel,
-	}
-}
-
-// Acquire gets a worker from the pool, starting a new one if needed.
-// If a dead worker is detected, it's replaced.
-func (p *WorkerPool) Acquire() (*Worker, error) {
-	select {
-	case w := <-p.workers:
-		// Got a worker from the pool, check if it's alive
-		if w.IsDead() {
-			slog.Info("worker is dead, starting replacement")
-			return p.startNewWorker()
-		}
-		return w, nil
-	default:
-		// No workers available in the pool
-		p.mu.Lock()
-		if p.started < p.size {
-			// We can start a new worker
-			p.started++
-			p.mu.Unlock()
-			return p.startNewWorker()
-		}
-		p.mu.Unlock()
-
-		// Pool is full, wait for a worker to be returned
-		select {
-		case <-p.ctx.Done():
-			return nil, fmt.Errorf("worker pool closed")
-		case w := <-p.workers:
-			if w.IsDead() {
-				slog.Info("worker is dead, starting replacement")
-				return p.startNewWorker()
-			}
-			return w, nil
-		}
-	}
-}
-
-// startNewWorker starts a new worker process.
-func (p *WorkerPool) startNewWorker() (*Worker, error) {
-	w, err := StartWorker(p.ctx, p.workDir, p.runtimeBinds, p.blockAWSCredentials)
-	if err != nil {
-		// Decrement started count on failure
-		p.mu.Lock()
-		p.started--
-		p.mu.Unlock()
-		return nil, fmt.Errorf("failed to start worker: %w", err)
-	}
-	return w, nil
-}
-
-// Release returns a worker to the pool.
-func (p *WorkerPool) Release(w *Worker) {
-	if w.IsDead() {
-		// Don't return dead workers to the pool
-		p.mu.Lock()
-		p.started--
-		p.mu.Unlock()
-		return
-	}
-
-	select {
-	case p.workers <- w:
-		// Successfully returned to pool
-	case <-p.ctx.Done():
-		// Pool is closed, kill the worker
-		w.Close()
-	}
-}
-
-// Close shuts down the worker pool and kills all workers.
-func (p *WorkerPool) Close() error {
-	p.closeOnce.Do(func() {
-		p.cancel()
-
-		// Close the workers channel and kill all workers
-		close(p.workers)
-		for w := range p.workers {
-			w.Close()
-		}
-	})
-	return nil
 }

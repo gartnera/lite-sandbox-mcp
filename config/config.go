@@ -148,12 +148,11 @@ type RuntimesConfig struct {
 // Config holds all user configuration. New fields can be added over time;
 // unknown YAML fields are silently ignored for forward compatibility.
 type Config struct {
-	ExtraCommands    []string        `yaml:"extra_commands,omitempty"`
-	Git              *GitConfig      `yaml:"git,omitempty"`
-	Runtimes         *RuntimesConfig `yaml:"runtimes,omitempty"`
-	AWS              *AWSConfig      `yaml:"aws,omitempty"`
-	OSSandbox        *bool           `yaml:"os_sandbox,omitempty"`
-	OSSandboxWorkers *int            `yaml:"os_sandbox_workers,omitempty"`
+	ExtraCommands []string        `yaml:"extra_commands,omitempty"`
+	Git           *GitConfig      `yaml:"git,omitempty"`
+	Runtimes      *RuntimesConfig `yaml:"runtimes,omitempty"`
+	AWS           *AWSConfig      `yaml:"aws,omitempty"`
+	OSSandbox     *bool           `yaml:"os_sandbox,omitempty"`
 }
 
 // OSSandboxEnabled returns whether OS-level sandboxing with bwrap is enabled (default: false).
@@ -162,14 +161,6 @@ func (c *Config) OSSandboxEnabled() bool {
 		return false
 	}
 	return *c.OSSandbox
-}
-
-// OSSandboxWorkersCount returns the number of worker processes for the OS sandbox (default: 4).
-func (c *Config) OSSandboxWorkersCount() int {
-	if c == nil || c.OSSandboxWorkers == nil {
-		return 4
-	}
-	return *c.OSSandboxWorkers
 }
 
 // Path returns the platform-appropriate config file path.
