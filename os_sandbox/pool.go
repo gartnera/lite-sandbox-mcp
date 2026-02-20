@@ -106,22 +106,29 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string, block
 
 	// If running from a test binary, try to find the actual binary
 	baseName := filepath.Base(self)
-	if baseName != "lite-sandbox" && (filepath.Ext(self) == ".test" || filepath.Ext(baseName) == ".test") {
+	isTestBinary := baseName != "lite-sandbox" && (filepath.Ext(self) == ".test" || filepath.Ext(baseName) == ".test")
+	if isTestBinary {
+		found := false
 		// Try to find lite-sandbox in current working directory
 		cwd, err := os.Getwd()
 		if err == nil {
 			candidatePath := filepath.Join(cwd, "lite-sandbox")
 			if _, err := os.Stat(candidatePath); err == nil {
 				self = candidatePath
+				found = true
 			} else {
 				// Try two levels up (for tests in tool/bash_sandboxed)
 				candidatePath = filepath.Join(cwd, "../..", "lite-sandbox")
 				if absPath, err := filepath.Abs(candidatePath); err == nil {
 					if _, err := os.Stat(absPath); err == nil {
 						self = absPath
+						found = true
 					}
 				}
 			}
+		}
+		if !found {
+			return nil, fmt.Errorf("lite-sandbox binary not found (required for OS sandbox tests, run 'go build -o lite-sandbox' first)")
 		}
 	}
 
