@@ -278,3 +278,31 @@ func TestValidate_BlockedArFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_BlockedRgFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"rg --pre", "rg --pre python pattern", `rg flag "--pre" is not allowed`},
+		{"rg --pre=cmd", "rg --pre=python pattern", `rg flag "--pre=python" is not allowed`},
+		{"rg --pre-glob", "rg --pre-glob '*.pdf' pattern", `rg flag "--pre-glob" is not allowed`},
+		{"rg --pre-glob=val", "rg --pre-glob='*.pdf' pattern", `rg flag "--pre-glob=*.pdf" is not allowed`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = newTestSandbox().validate(f)
+			if err == nil {
+				t.Fatal("expected validation error for blocked rg flag")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}

@@ -7,6 +7,24 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
+// validateRgArgs checks that rg (ripgrep) is not called with --pre, which
+// executes an arbitrary command as a preprocessor for each file searched.
+func validateRgArgs(_ *Sandbox, args []*syntax.Word) error {
+	for _, arg := range args[1:] {
+		text := wordText(arg)
+		if text == "" {
+			continue
+		}
+		if text == "--pre" || strings.HasPrefix(text, "--pre=") {
+			return fmt.Errorf("rg flag %q is not allowed: executes an external command", text)
+		}
+		if text == "--pre-glob" || strings.HasPrefix(text, "--pre-glob=") {
+			return fmt.Errorf("rg flag %q is not allowed: used with --pre to execute external commands", text)
+		}
+	}
+	return nil
+}
+
 // blockedFindFlags lists find flags that modify the filesystem or write to files.
 var blockedFindFlags = map[string]string{
 	"-delete":  "deletes files",

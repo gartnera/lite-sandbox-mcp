@@ -219,6 +219,7 @@ var writeCommands = map[string]bool{
 // Validators receive the *Sandbox so they can access config (e.g., runtimes, git).
 var commandArgValidators = map[string]func(s *Sandbox, args []*syntax.Word) error{
 	"awk":   validateAwkArgs,
+	"rg":    validateRgArgs,
 	"find":  validateFindArgs,
 	"tar":   validateTarArgs,
 	"unzip": validateUnzipArgs,
