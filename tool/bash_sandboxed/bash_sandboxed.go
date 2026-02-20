@@ -324,6 +324,28 @@ func extractCommandName(w *syntax.Word) string {
 	return w.Lit()
 }
 
+// ValidateCommand parses and validates a bash command without executing it.
+// It mirrors the validation in Execute() but skips execution.
+// workDir is the working directory for resolving relative paths.
+// readAllowedPaths are absolute directories that read-only commands may access.
+// writeAllowedPaths are absolute directories that write commands may access.
+func (s *Sandbox) ValidateCommand(command string, workDir string, readAllowedPaths, writeAllowedPaths []string) error {
+	f, err := ParseBash(command)
+	if err != nil {
+		return err
+	}
+	if err := s.validate(f); err != nil {
+		return err
+	}
+	if err := validatePaths(f, workDir, readAllowedPaths, writeAllowedPaths); err != nil {
+		return err
+	}
+	if err := validateRedirectPaths(f, workDir, readAllowedPaths, writeAllowedPaths); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Execute parses, validates, and executes a bash command.
 // workDir is the working directory for the command and for resolving relative paths.
 // readAllowedPaths are absolute directories that read-only commands may access.

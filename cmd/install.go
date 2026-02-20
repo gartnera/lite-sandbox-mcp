@@ -17,7 +17,8 @@ var installCmd = &cobra.Command{
 	Long: `Automatically configures Claude Code by:
 1. Adding the MCP server to ~/.claude.json (user-scoped)
 2. Adding auto-allow permission to ~/.claude/settings.json
-3. Adding usage directive to ~/.claude/CLAUDE.md`,
+3. Adding usage directive to ~/.claude/CLAUDE.md
+4. Installing the preflight hook to redirect Bash to lite-sandbox`,
 	RunE: runInstall,
 }
 
@@ -66,6 +67,13 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to configure CLAUDE.md: %w", err)
 	}
 	fmt.Println("✓ Added usage directive to ~/.claude/CLAUDE.md")
+
+	// 4. Configure preflight hook
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if err := configurePreflightHook(settingsPath, binPath); err != nil {
+		return fmt.Errorf("failed to configure preflight hook: %w", err)
+	}
+	fmt.Println("✓ Installed preflight hook to ~/.claude/settings.json")
 
 	fmt.Println("\n✓ Installation complete!")
 	fmt.Println("\nRestart Claude Code for the changes to take effect.")
@@ -122,47 +130,66 @@ func configureMCPServer(claudeJsonPath, binPath string) error {
 	return os.WriteFile(claudeJsonPath, data, 0644)
 }
 
-type settingsConfig struct {
-	Permissions *permissionsConfig `json:"permissions,omitempty"`
-}
-
 type permissionsConfig struct {
 	Allow []string `json:"allow,omitempty"`
+}
+
+// readSettingsFile reads and parses a settings.json file into a generic map,
+// preserving all keys. Returns an empty map if the file doesn't exist.
+func readSettingsFile(settingsPath string) (map[string]json.RawMessage, error) {
+	cfg := make(map[string]json.RawMessage)
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		return cfg, nil
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse existing settings.json: %w", err)
+	}
+	return cfg, nil
+}
+
+// writeSettingsFile writes a generic map back to settings.json.
+func writeSettingsFile(settingsPath string, cfg map[string]json.RawMessage) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, data, 0644)
 }
 
 func configurePermissions(claudeDir string) error {
 	settingsPath := filepath.Join(claudeDir, "settings.json")
 
-	var cfg settingsConfig
-	data, err := os.ReadFile(settingsPath)
+	cfg, err := readSettingsFile(settingsPath)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		// File doesn't exist, start with empty config
-	} else {
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return fmt.Errorf("failed to parse existing settings.json: %w", err)
-		}
+		return err
 	}
 
-	// Ensure permissions structure exists
-	if cfg.Permissions == nil {
-		cfg.Permissions = &permissionsConfig{}
+	// Parse existing permissions if present
+	var perms permissionsConfig
+	if raw, ok := cfg["permissions"]; ok {
+		if err := json.Unmarshal(raw, &perms); err != nil {
+			return fmt.Errorf("failed to parse permissions in settings.json: %w", err)
+		}
 	}
 
 	// Add the permission if not already present
 	permission := "mcp__lite-sandbox__bash"
-	if !slices.Contains(cfg.Permissions.Allow, permission) {
-		cfg.Permissions.Allow = append(cfg.Permissions.Allow, permission)
+	if !slices.Contains(perms.Allow, permission) {
+		perms.Allow = append(perms.Allow, permission)
 	}
 
-	// Write back
-	data, err = json.MarshalIndent(cfg, "", "  ")
+	// Marshal permissions back into the config
+	permsRaw, err := json.Marshal(perms)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(settingsPath, data, 0644)
+	cfg["permissions"] = permsRaw
+
+	return writeSettingsFile(settingsPath, cfg)
 }
 
 func configureCLAUDEMD(claudeDir string) error {

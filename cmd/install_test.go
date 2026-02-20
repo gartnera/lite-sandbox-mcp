@@ -125,18 +125,19 @@ func TestConfigurePermissions(t *testing.T) {
 		t.Fatalf("failed to read settings.json: %v", err)
 	}
 
-	var cfg settingsConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("failed to parse settings.json: %v", err)
 	}
 
-	if cfg.Permissions == nil {
-		t.Fatal("permissions is nil")
+	var perms permissionsConfig
+	if err := json.Unmarshal(raw["permissions"], &perms); err != nil {
+		t.Fatalf("failed to parse permissions: %v", err)
 	}
 
 	expected := "mcp__lite-sandbox__bash"
-	if !slices.Contains(cfg.Permissions.Allow, expected) {
-		t.Errorf("expected permission %s not found in %v", expected, cfg.Permissions.Allow)
+	if !slices.Contains(perms.Allow, expected) {
+		t.Errorf("expected permission %s not found in %v", expected, perms.Allow)
 	}
 
 	// Test that running again doesn't duplicate
@@ -150,18 +151,60 @@ func TestConfigurePermissions(t *testing.T) {
 		t.Fatalf("failed to read settings.json: %v", err)
 	}
 
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("failed to parse settings.json: %v", err)
 	}
 
+	if err := json.Unmarshal(raw["permissions"], &perms); err != nil {
+		t.Fatalf("failed to parse permissions: %v", err)
+	}
+
 	count := 0
-	for _, p := range cfg.Permissions.Allow {
+	for _, p := range perms.Allow {
 		if p == expected {
 			count++
 		}
 	}
 	if count != 1 {
 		t.Errorf("expected permission to appear once, got %d times", count)
+	}
+}
+
+func TestConfigurePermissionsPreservesUnknownKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	settingsPath := filepath.Join(tmpDir, "settings.json")
+
+	// Write a settings.json with extra keys (like hooks)
+	existingContent := `{"hooks": {"PreToolUse": [{"matcher": "Bash"}]}, "someOther": true}`
+	if err := os.WriteFile(settingsPath, []byte(existingContent), 0644); err != nil {
+		t.Fatalf("failed to write existing settings.json: %v", err)
+	}
+
+	err := configurePermissions(tmpDir)
+	if err != nil {
+		t.Fatalf("configurePermissions failed: %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("failed to read settings.json: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("failed to parse settings.json: %v", err)
+	}
+
+	// Verify existing keys are preserved
+	if _, ok := raw["hooks"]; !ok {
+		t.Error("existing key 'hooks' was lost")
+	}
+	if _, ok := raw["someOther"]; !ok {
+		t.Error("existing key 'someOther' was lost")
+	}
+	// Verify permissions was added
+	if _, ok := raw["permissions"]; !ok {
+		t.Error("permissions key was not added")
 	}
 }
 

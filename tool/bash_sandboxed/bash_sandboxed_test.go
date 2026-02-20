@@ -467,6 +467,41 @@ func TestValidate_ExtraCommands(t *testing.T) {
 	}
 }
 
+func TestValidateCommand(t *testing.T) {
+	workDir := t.TempDir()
+	s := NewSandbox()
+
+	// Valid command should pass
+	err := s.ValidateCommand("echo hello", workDir, []string{workDir}, []string{workDir})
+	if err != nil {
+		t.Fatalf("expected valid command to pass, got: %v", err)
+	}
+
+	// Piped valid commands should pass
+	err = s.ValidateCommand("ls -la | grep foo", workDir, []string{workDir}, []string{workDir})
+	if err != nil {
+		t.Fatalf("expected valid piped command to pass, got: %v", err)
+	}
+
+	// Blocked command should fail
+	err = s.ValidateCommand("python script.py", workDir, []string{workDir}, []string{workDir})
+	if err == nil {
+		t.Fatal("expected blocked command to fail validation")
+	}
+
+	// Invalid syntax should fail
+	err = s.ValidateCommand("echo 'hello", workDir, []string{workDir}, []string{workDir})
+	if err == nil {
+		t.Fatal("expected invalid syntax to fail validation")
+	}
+
+	// Path outside allowed paths should fail
+	err = s.ValidateCommand("cat /etc/passwd", workDir, []string{workDir}, []string{workDir})
+	if err == nil {
+		t.Fatal("expected path outside allowed dirs to fail validation")
+	}
+}
+
 func TestExecute_Timeout(t *testing.T) {
 	workDir := t.TempDir()
 	s := NewSandbox()
