@@ -152,6 +152,27 @@ func TestValidate_AllowedCommands(t *testing.T) {
 		{"ar print", "ar p archive.a"},
 		{"ar list with dash", "ar -t archive.a"},
 		{"ar print verbose", "ar tv archive.a"},
+		// New commands: output/display
+		{"col", "man ls | col -b"},
+		{"colrm", "echo abcdefgh | colrm 3 5"},
+		{"vis", "vis file.txt"},
+		{"unvis", "unvis file.txt"},
+		{"fmt", "fmt -w 72 file.txt"},
+		// New commands: search
+		{"rg", "rg pattern ."},
+		{"rg with flags", "rg -n --type go pattern"},
+		{"look", "look prefix file.txt"},
+		// New commands: file info
+		{"shasum", "shasum -a 256 file.txt"},
+		{"pathchk", "pathchk -p file.txt"},
+		// New commands: text processing
+		{"tsort", "tsort deps.txt"},
+		{"iconv", "iconv -f UTF-8 -t ASCII file.txt"},
+		{"base64 encode", "echo hello | base64"},
+		{"base64 decode", "echo aGVsbG8= | base64 -d"},
+		{"base64 with file", "base64 -i input.txt -o output.txt"},
+		// New commands: computation
+		{"uuidgen", "uuidgen"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

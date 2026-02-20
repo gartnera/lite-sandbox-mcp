@@ -39,16 +39,23 @@ var allowedCommands = map[string]bool{
 	"pr":       true,
 	"expand":   true,
 	"unexpand": true,
+	"col":      true,
+	"colrm":    true,
+	"vis":      true,
+	"unvis":    true,
+	"fmt":      true,
 
 	// Search / find (read-only)
 	"grep":    true,
 	"egrep":   true,
 	"fgrep":   true,
+	"rg":      true,
 	"find":    true,
 	"locate":  true,
 	"which":   true,
 	"whereis": true,
 	"type":    true,
+	"look":    true,
 
 	// Navigation / directory management
 	"cd":    true,
@@ -64,10 +71,12 @@ var allowedCommands = map[string]bool{
 	"realpath":  true,
 	"basename":  true,
 	"dirname":   true,
+	"pathchk":   true,
 	"pwd":       true,
 	"sha256sum": true,
 	"sha1sum":   true,
 	"md5sum":    true,
+	"shasum":    true,
 	"cksum":     true,
 	"b2sum":     true,
 
@@ -79,16 +88,19 @@ var allowedCommands = map[string]bool{
 	"diff":    true,
 	"comm":    true,
 	"join":    true,
+	"tsort":   true,
 	"strings": true,
 	"od":      true,
 	"hexdump": true,
 	"xxd":     true,
+	"iconv":   true,
 
 	// JSON/structured data and text processing (stdin/stdout processors)
 	"jq":  true,
 	"yq":  true,
 	// awk is executed via goawk with system() and file-writes disabled.
-	"awk": true,
+	"awk":    true,
+	"base64": true,
 
 	// Shell builtins (non-destructive, no escape capability)
 	"test":     true,
@@ -122,11 +134,12 @@ var allowedCommands = map[string]bool{
 	"cal":      true,
 
 	// Math / calculation (pure computation)
-	"bc":     true,
-	"dc":     true,
-	"seq":    true,
-	"factor": true,
-	"numfmt": true,
+	"bc":      true,
+	"dc":      true,
+	"seq":     true,
+	"factor":  true,
+	"numfmt":  true,
+	"uuidgen": true,
 
 	// Compressed file readers (read-only, no extraction)
 	"zcat":  true,
