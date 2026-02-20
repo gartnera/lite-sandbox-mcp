@@ -7,19 +7,37 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// validateRgArgs checks that rg (ripgrep) is not called with --pre, which
-// executes an arbitrary command as a preprocessor for each file searched.
-func validateRgArgs(_ *Sandbox, args []*syntax.Word) error {
-	for _, arg := range args[1:] {
-		text := wordText(arg)
+// validateRgArgs checks that rg --pre (preprocessor) references only
+// whitelisted commands. --pre executes COMMAND for each file searched,
+// so the command is validated recursively against the allowlist.
+func validateRgArgs(s *Sandbox, args []*syntax.Word) error {
+	for i := 1; i < len(args); i++ {
+		text := wordText(args[i])
 		if text == "" {
 			continue
 		}
-		if text == "--pre" || strings.HasPrefix(text, "--pre=") {
-			return fmt.Errorf("rg flag %q is not allowed: executes an external command", text)
+		// --pre COMMAND (separate arg)
+		if text == "--pre" {
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("rg --pre requires a command argument")
+			}
+			if err := validateSubCommand(s, args[i:i+1]); err != nil {
+				return fmt.Errorf("rg --pre: %w", err)
+			}
+			continue
 		}
-		if text == "--pre-glob" || strings.HasPrefix(text, "--pre-glob=") {
-			return fmt.Errorf("rg flag %q is not allowed: used with --pre to execute external commands", text)
+		// --pre=COMMAND (inline)
+		if strings.HasPrefix(text, "--pre=") {
+			cmdName := text[len("--pre="):]
+			if cmdName == "" {
+				continue // empty --pre= disables preprocessing
+			}
+			cmdWord := &syntax.Word{Parts: []syntax.WordPart{&syntax.Lit{Value: cmdName}}}
+			if err := validateSubCommand(s, []*syntax.Word{cmdWord}); err != nil {
+				return fmt.Errorf("rg --pre: %w", err)
+			}
+			continue
 		}
 	}
 	return nil

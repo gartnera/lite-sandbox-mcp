@@ -279,18 +279,18 @@ func TestValidate_BlockedArFlags(t *testing.T) {
 	}
 }
 
-func TestValidate_BlockedRgFlags(t *testing.T) {
-	tests := []struct {
+func TestValidate_RgPre(t *testing.T) {
+	blocked := []struct {
 		name    string
 		command string
 		errMsg  string
 	}{
-		{"rg --pre", "rg --pre python pattern", `rg flag "--pre" is not allowed`},
-		{"rg --pre=cmd", "rg --pre=python pattern", `rg flag "--pre=python" is not allowed`},
-		{"rg --pre-glob", "rg --pre-glob '*.pdf' pattern", `rg flag "--pre-glob" is not allowed`},
-		{"rg --pre-glob=val", "rg --pre-glob='*.pdf' pattern", `rg flag "--pre-glob=*.pdf" is not allowed`},
+		{"rg --pre python", "rg --pre python pattern", `command "python" is not allowed`},
+		{"rg --pre=python", "rg --pre=python pattern", `command "python" is not allowed`},
+		{"rg --pre curl", "rg --pre curl pattern", `command "curl" is not allowed`},
+		{"rg --pre no arg", "rg --pre", `rg --pre requires a command argument`},
 	}
-	for _, tt := range tests {
+	for _, tt := range blocked {
 		t.Run(tt.name, func(t *testing.T) {
 			f, err := ParseBash(tt.command)
 			if err != nil {
@@ -298,10 +298,32 @@ func TestValidate_BlockedRgFlags(t *testing.T) {
 			}
 			err = newTestSandbox().validate(f)
 			if err == nil {
-				t.Fatal("expected validation error for blocked rg flag")
+				t.Fatal("expected validation error")
 			}
 			if !strings.Contains(err.Error(), tt.errMsg) {
 				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+
+	allowed := []struct {
+		name    string
+		command string
+	}{
+		{"rg --pre cat", "rg --pre cat pattern"},
+		{"rg --pre=cat", "rg --pre=cat pattern"},
+		{"rg --pre zcat", "rg --pre zcat pattern"},
+		{"rg --pre-glob without pre", "rg pattern"},
+		{"rg empty --pre=", "rg --pre= pattern"},
+	}
+	for _, tt := range allowed {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := newTestSandbox().validate(f); err != nil {
+				t.Fatalf("expected command to be allowed, got: %v", err)
 			}
 		})
 	}
