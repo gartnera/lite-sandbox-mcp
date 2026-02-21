@@ -240,23 +240,23 @@ var commandArgValidators = map[string]func(s *Sandbox, args []*syntax.Word) erro
 }
 
 func validateGitCommand(s *Sandbox, args []*syntax.Word) error {
-	return validateGitArgs(args, s.getGitConfig())
+	return validateGitArgs(args, s.getConfig().Git)
 }
 
 func validateGoCommand(s *Sandbox, args []*syntax.Word) error {
-	runtimesCfg := s.getRuntimesConfig()
-	if runtimesCfg == nil || runtimesCfg.Go == nil || !runtimesCfg.Go.GoEnabled() {
+	cfg := s.getConfig()
+	if cfg.Runtimes == nil || cfg.Runtimes.Go == nil || !cfg.Runtimes.Go.GoEnabled() {
 		return fmt.Errorf("command \"go\" is not allowed (runtimes.go.enabled is disabled)")
 	}
-	return validateGoArgs(args, runtimesCfg.Go)
+	return validateGoArgs(args, cfg.Runtimes.Go)
 }
 
 func validatePnpmCommand(s *Sandbox, args []*syntax.Word) error {
-	runtimesCfg := s.getRuntimesConfig()
-	if runtimesCfg == nil || runtimesCfg.Pnpm == nil || !runtimesCfg.Pnpm.PnpmEnabled() {
+	cfg := s.getConfig()
+	if cfg.Runtimes == nil || cfg.Runtimes.Pnpm == nil || !cfg.Runtimes.Pnpm.PnpmEnabled() {
 		return fmt.Errorf("command \"pnpm\" is not allowed (runtimes.pnpm.enabled is disabled)")
 	}
-	return validatePnpmArgs(args, runtimesCfg.Pnpm)
+	return validatePnpmArgs(args, cfg.Runtimes.Pnpm)
 }
 
 func validateBashCommand(s *Sandbox, args []*syntax.Word) error {
@@ -264,8 +264,8 @@ func validateBashCommand(s *Sandbox, args []*syntax.Word) error {
 }
 
 func validateAWSCommand(s *Sandbox, args []*syntax.Word) error {
-	awsCfg := s.getAWSConfig()
-	if awsCfg == nil || !awsCfg.AWSEnabled() {
+	cfg := s.getConfig()
+	if cfg.AWS == nil || !cfg.AWS.AWSEnabled() {
 		return fmt.Errorf("command \"aws\" is not allowed (aws.enabled is disabled)")
 	}
 	// AWS CLI credentials will come from IMDS endpoint, not files

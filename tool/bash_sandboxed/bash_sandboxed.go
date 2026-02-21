@@ -21,14 +21,10 @@ import (
 // the built-in allowlist plus any extra commands from config.
 type Sandbox struct {
 	mu               sync.RWMutex
+	cfg              *config.Config
 	extraCommands    map[string]bool
-	gitConfig        *config.GitConfig
-	runtimesConfig   *config.RuntimesConfig
-	awsConfig        *config.AWSConfig
 	imdsEndpoint     string
 	runtimeReadPaths []string
-	configReadPaths  []string
-	configWritePaths []string
 	osSandbox        bool
 	worker           *os_sandbox.Worker
 	workerWorkDir    string
@@ -42,7 +38,10 @@ type Sandbox struct {
 
 // NewSandbox creates a Sandbox with no extra commands.
 func NewSandbox() *Sandbox {
-	return &Sandbox{argValidators: commandArgValidators}
+	return &Sandbox{
+		cfg:           &config.Config{},
+		argValidators: commandArgValidators,
+	}
 }
 
 // UpdateConfig replaces the sandbox configuration with the provided config.
@@ -58,13 +57,9 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 	blockAWSCredentials := shouldBlockAWSCredentials(cfg.AWS)
 
 	s.mu.Lock()
+	s.cfg = cfg
 	s.extraCommands = m
-	s.gitConfig = cfg.Git
-	s.runtimesConfig = cfg.Runtimes
-	s.awsConfig = cfg.AWS
 	s.runtimeReadPaths = runtimeReadPaths
-	s.configReadPaths = cfg.ExpandedReadablePaths()
-	s.configWritePaths = cfg.ExpandedWritablePaths()
 
 	// Store worker config for lazy start / restart.
 	s.workerWorkDir = workDir
@@ -100,32 +95,18 @@ func shouldBlockAWSCredentials(awsCfg *config.AWSConfig) bool {
 	return awsCfg.UsesIMDS()
 }
 
+// getConfig returns a snapshot of the current config.
+func (s *Sandbox) getConfig() *config.Config {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg
+}
+
 // getExtraCommands returns a snapshot of the current extra commands.
 func (s *Sandbox) getExtraCommands() map[string]bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.extraCommands
-}
-
-// getGitConfig returns a snapshot of the current git config.
-func (s *Sandbox) getGitConfig() *config.GitConfig {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.gitConfig
-}
-
-// getRuntimesConfig returns a snapshot of the current runtimes config.
-func (s *Sandbox) getRuntimesConfig() *config.RuntimesConfig {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.runtimesConfig
-}
-
-// getAWSConfig returns a snapshot of the current AWS config.
-func (s *Sandbox) getAWSConfig() *config.AWSConfig {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.awsConfig
 }
 
 // SetIMDSEndpoint sets the IMDS endpoint URL for AWS credential fetching.
@@ -148,14 +129,14 @@ func (s *Sandbox) RuntimeReadPaths() []string {
 func (s *Sandbox) ConfigReadPaths() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.configReadPaths
+	return s.cfg.ExpandedReadablePaths()
 }
 
 // ConfigWritePaths returns the user-configured writable paths (with ~ expanded).
 func (s *Sandbox) ConfigWritePaths() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.configWritePaths
+	return s.cfg.ExpandedWritablePaths()
 }
 
 // Close shuts down the sandbox, closing the worker if running.
