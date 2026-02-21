@@ -157,6 +157,10 @@ var allowedCommands = map[string]bool{
 	// Version control (read-only, with arg validator for git)
 	"git": true,
 
+	// Nested shell (intercepted in ExecHandler, executed via sandbox interpreter)
+	"bash": true,
+	"sh":   true,
+
 	// Runtimes (config-gated, validated by commandArgValidators)
 	"go":   true,
 	"pnpm": true,
@@ -218,7 +222,9 @@ var writeCommands = map[string]bool{
 // validator here to block those flags while still allowing the command itself.
 // Validators receive the *Sandbox so they can access config (e.g., runtimes, git).
 var commandArgValidators = map[string]func(s *Sandbox, args []*syntax.Word) error{
-	"awk":   validateAwkArgs,
+	"awk":  validateAwkArgs,
+	"bash": validateBashCommand,
+	"sh":   validateBashCommand,
 	"rg":    validateRgArgs,
 	"find":  validateFindArgs,
 	"tar":   validateTarArgs,
@@ -251,6 +257,10 @@ func validatePnpmCommand(s *Sandbox, args []*syntax.Word) error {
 		return fmt.Errorf("command \"pnpm\" is not allowed (runtimes.pnpm.enabled is disabled)")
 	}
 	return validatePnpmArgs(args, runtimesCfg.Pnpm)
+}
+
+func validateBashCommand(s *Sandbox, args []*syntax.Word) error {
+	return validateBashArgs(s, args)
 }
 
 func validateAWSCommand(s *Sandbox, args []*syntax.Word) error {

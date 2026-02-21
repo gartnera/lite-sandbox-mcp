@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -291,8 +290,10 @@ func (s *Sandbox) validate(f *syntax.File) error {
 					return false
 				}
 				if !allowedCommands[cmdName] && !extra[cmdName] {
-					validationErr = fmt.Errorf("command %q is not allowed", cmdName)
-					return false
+					if !isScriptPath(cmdName) {
+						validationErr = fmt.Errorf("command %q is not allowed", cmdName)
+						return false
+					}
 				}
 				if validator, ok := commandArgValidators[cmdName]; ok {
 					if err := validator(s, n.Args); err != nil {
@@ -397,39 +398,21 @@ func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir
 		os.Setenv("AWS_EC2_METADATA_SERVICE_ENDPOINT", imdsEndpoint)
 	}
 
+	// Store sandbox paths in context so nested bash/sh can access them
+	ctx = context.WithValue(ctx, sandboxPathsKey, &sandboxPaths{
+		readAllowedPaths:  readAllowedPaths,
+		writeAllowedPaths: writeAllowedPaths,
+	})
+
 	// Build interpreter options
 	opts := []interp.RunnerOption{
 		interp.Dir(workDir),
 		interp.StdIO(nil, &out, &out),
 		interp.Env(expand.ListEnviron(env...)),
-		interp.CallHandler(func(ctx context.Context, args []string) ([]string, error) {
-			hc := interp.HandlerCtx(ctx)
-			if err := validateExpandedPaths(args, hc.Dir, readAllowedPaths, writeAllowedPaths); err != nil {
-				return nil, err
-			}
-			return args, nil
-		}),
-		interp.OpenHandler(func(ctx context.Context, path string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
-			hc := interp.HandlerCtx(ctx)
-			if err := validateOpenPath(path, flag, hc.Dir, readAllowedPaths, writeAllowedPaths); err != nil {
-				return nil, err
-			}
-			return interp.DefaultOpenHandler()(ctx, path, flag, perm)
-		}),
 	}
 
-	// Always register an ExecHandler so we can intercept awk and run it via
-	// goawk (which disables system() and file writes). Other commands are
-	// forwarded to the worker (OS sandbox) or the default handler.
-	opts = append(opts, interp.ExecHandler(func(ctx context.Context, args []string) error {
-		if len(args) > 0 && args[0] == "awk" {
-			return executeAwk(ctx, args)
-		}
-		if useOSSandbox {
-			return s.execInWorker(ctx, args)
-		}
-		return interp.DefaultExecHandler(-1)(ctx, args)
-	}))
+	// Add security handlers (CallHandler, OpenHandler, ExecHandler)
+	opts = append(opts, s.buildSecurityHandlers(readAllowedPaths, writeAllowedPaths, useOSSandbox)...)
 
 	runner, err := interp.New(opts...)
 	if err != nil {
