@@ -149,10 +149,48 @@ type RuntimesConfig struct {
 // unknown YAML fields are silently ignored for forward compatibility.
 type Config struct {
 	ExtraCommands []string        `yaml:"extra_commands,omitempty"`
+	ReadablePaths []string        `yaml:"readable_paths,omitempty"`
+	WritablePaths []string        `yaml:"writable_paths,omitempty"`
 	Git           *GitConfig      `yaml:"git,omitempty"`
 	Runtimes      *RuntimesConfig `yaml:"runtimes,omitempty"`
 	AWS           *AWSConfig      `yaml:"aws,omitempty"`
 	OSSandbox     *bool           `yaml:"os_sandbox,omitempty"`
+}
+
+// ExpandedReadablePaths returns ReadablePaths with ~ expanded to the user's
+// home directory and all paths resolved to absolute paths.
+func (c *Config) ExpandedReadablePaths() []string {
+	return expandPaths(c.ReadablePaths)
+}
+
+// ExpandedWritablePaths returns WritablePaths with ~ expanded to the user's
+// home directory and all paths resolved to absolute paths.
+func (c *Config) ExpandedWritablePaths() []string {
+	return expandPaths(c.WritablePaths)
+}
+
+// expandPaths expands ~ to the user's home directory and resolves absolute paths.
+func expandPaths(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	home, _ := os.UserHomeDir()
+	result := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if home != "" && len(p) > 0 && p[0] == '~' {
+			if len(p) == 1 {
+				p = home
+			} else if p[1] == '/' {
+				p = filepath.Join(home, p[2:])
+			}
+		}
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			continue
+		}
+		result = append(result, abs)
+	}
+	return result
 }
 
 // OSSandboxEnabled returns whether OS-level sandboxing with bwrap is enabled (default: false).

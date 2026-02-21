@@ -85,7 +85,8 @@ func newMCPServer(sandbox *bash_sandboxed.Sandbox) *server.MCPServer {
 		defer cancel()
 
 		readPaths := append([]string{cwd}, sandbox.RuntimeReadPaths()...)
-		writePaths := []string{cwd}
+		readPaths = append(readPaths, sandbox.ConfigReadPaths()...)
+		writePaths := append([]string{cwd}, sandbox.ConfigWritePaths()...)
 		output, err := sandbox.Execute(timeoutCtx, command, cwd, readPaths, writePaths)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil

@@ -467,6 +467,39 @@ func TestValidate_ExtraCommands(t *testing.T) {
 	}
 }
 
+func TestConfigPaths(t *testing.T) {
+	s := NewSandbox()
+
+	// Initially empty
+	if got := s.ConfigReadPaths(); got != nil {
+		t.Fatalf("expected nil config read paths, got %v", got)
+	}
+	if got := s.ConfigWritePaths(); got != nil {
+		t.Fatalf("expected nil config write paths, got %v", got)
+	}
+
+	// After UpdateConfig with paths
+	s.UpdateConfig(&config.Config{
+		ReadablePaths: []string{"/tmp/readable"},
+		WritablePaths: []string{"/tmp/writable"},
+	}, "")
+	if got := s.ConfigReadPaths(); len(got) != 1 || got[0] != "/tmp/readable" {
+		t.Fatalf("expected [/tmp/readable], got %v", got)
+	}
+	if got := s.ConfigWritePaths(); len(got) != 1 || got[0] != "/tmp/writable" {
+		t.Fatalf("expected [/tmp/writable], got %v", got)
+	}
+
+	// After clearing config
+	s.UpdateConfig(&config.Config{}, "")
+	if got := s.ConfigReadPaths(); got != nil {
+		t.Fatalf("expected nil after clearing, got %v", got)
+	}
+	if got := s.ConfigWritePaths(); got != nil {
+		t.Fatalf("expected nil after clearing, got %v", got)
+	}
+}
+
 func TestValidateCommand(t *testing.T) {
 	workDir := t.TempDir()
 	s := NewSandbox()

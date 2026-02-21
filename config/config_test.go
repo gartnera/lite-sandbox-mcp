@@ -70,6 +70,58 @@ func TestLoadUnknownFields(t *testing.T) {
 	}
 }
 
+func TestExpandedReadablePaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("failed to get home dir: %v", err)
+	}
+
+	cfg := &Config{
+		ReadablePaths: []string{"~/Documents", "/tmp/shared"},
+	}
+	got := cfg.ExpandedReadablePaths()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 paths, got %d: %v", len(got), got)
+	}
+	if got[0] != filepath.Join(home, "Documents") {
+		t.Fatalf("expected %s, got %s", filepath.Join(home, "Documents"), got[0])
+	}
+	if got[1] != "/tmp/shared" {
+		t.Fatalf("expected /tmp/shared, got %s", got[1])
+	}
+}
+
+func TestExpandedWritablePaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("failed to get home dir: %v", err)
+	}
+
+	cfg := &Config{
+		WritablePaths: []string{"~", "~/Projects"},
+	}
+	got := cfg.ExpandedWritablePaths()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 paths, got %d: %v", len(got), got)
+	}
+	if got[0] != home {
+		t.Fatalf("expected %s, got %s", home, got[0])
+	}
+	if got[1] != filepath.Join(home, "Projects") {
+		t.Fatalf("expected %s, got %s", filepath.Join(home, "Projects"), got[1])
+	}
+}
+
+func TestExpandedPaths_Empty(t *testing.T) {
+	cfg := &Config{}
+	if got := cfg.ExpandedReadablePaths(); got != nil {
+		t.Fatalf("expected nil, got %v", got)
+	}
+	if got := cfg.ExpandedWritablePaths(); got != nil {
+		t.Fatalf("expected nil, got %v", got)
+	}
+}
+
 func TestWatch(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

@@ -27,6 +27,8 @@ type Sandbox struct {
 	awsConfig        *config.AWSConfig
 	imdsEndpoint     string
 	runtimeReadPaths []string
+	configReadPaths  []string
+	configWritePaths []string
 	osSandbox        bool
 	worker           *os_sandbox.Worker
 	workerWorkDir    string
@@ -61,6 +63,8 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 	s.runtimesConfig = cfg.Runtimes
 	s.awsConfig = cfg.AWS
 	s.runtimeReadPaths = runtimeReadPaths
+	s.configReadPaths = cfg.ExpandedReadablePaths()
+	s.configWritePaths = cfg.ExpandedWritablePaths()
 
 	// Store worker config for lazy start / restart.
 	s.workerWorkDir = workDir
@@ -138,6 +142,20 @@ func (s *Sandbox) RuntimeReadPaths() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.runtimeReadPaths
+}
+
+// ConfigReadPaths returns the user-configured readable paths (with ~ expanded).
+func (s *Sandbox) ConfigReadPaths() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.configReadPaths
+}
+
+// ConfigWritePaths returns the user-configured writable paths (with ~ expanded).
+func (s *Sandbox) ConfigWritePaths() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.configWritePaths
 }
 
 // Close shuts down the sandbox, closing the worker if running.
