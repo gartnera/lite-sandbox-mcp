@@ -139,6 +139,20 @@ func (a *AWSConfig) IMDSProfile() string {
 	return a.ForceProfile
 }
 
+// LocalBinaryExecutionConfig controls whether direct path execution
+// (./binary, ../binary, /path/to/binary) is allowed.
+type LocalBinaryExecutionConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+// IsEnabled returns whether local binary execution is allowed (default: false).
+func (l *LocalBinaryExecutionConfig) IsEnabled() bool {
+	if l == nil || l.Enabled == nil {
+		return false
+	}
+	return *l.Enabled
+}
+
 // RuntimesConfig controls code execution runtime permissions.
 type RuntimesConfig struct {
 	Go   *GoConfig   `yaml:"go,omitempty"`
@@ -153,8 +167,9 @@ type Config struct {
 	WritablePaths []string        `yaml:"writable_paths,omitempty"`
 	Git           *GitConfig      `yaml:"git,omitempty"`
 	Runtimes      *RuntimesConfig `yaml:"runtimes,omitempty"`
-	AWS           *AWSConfig      `yaml:"aws,omitempty"`
-	OSSandbox     *bool           `yaml:"os_sandbox,omitempty"`
+	AWS                  *AWSConfig                  `yaml:"aws,omitempty"`
+	LocalBinaryExecution *LocalBinaryExecutionConfig `yaml:"local_binary_execution,omitempty"`
+	OSSandbox            *bool                       `yaml:"os_sandbox,omitempty"`
 }
 
 // ExpandedReadablePaths returns ReadablePaths with ~ expanded to the user's

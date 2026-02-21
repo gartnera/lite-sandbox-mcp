@@ -155,3 +155,25 @@ func TestWatch(t *testing.T) {
 		t.Fatal("timed out waiting for config change notification")
 	}
 }
+
+func TestLocalBinaryExecutionConfig_IsEnabled(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+
+	tests := []struct {
+		name string
+		cfg  *LocalBinaryExecutionConfig
+		want bool
+	}{
+		{"nil config", nil, false},
+		{"nil enabled field", &LocalBinaryExecutionConfig{}, false},
+		{"enabled true", &LocalBinaryExecutionConfig{Enabled: boolPtr(true)}, true},
+		{"enabled false", &LocalBinaryExecutionConfig{Enabled: boolPtr(false)}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.IsEnabled(); got != tt.want {
+				t.Errorf("IsEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

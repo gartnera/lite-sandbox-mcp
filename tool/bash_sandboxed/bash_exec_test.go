@@ -4,10 +4,20 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gartnera/lite-sandbox/config"
 )
+
+// executeInDirWithSandbox runs command using a specific sandbox instance.
+func executeInDirWithSandbox(t *testing.T, s *Sandbox, dir, command string) (string, error) {
+	t.Helper()
+	paths := []string{dir}
+	return s.Execute(context.Background(), command, dir, paths, paths)
+}
 
 func TestValidateBashArgs_Allowed(t *testing.T) {
 	tests := []struct {
@@ -293,8 +303,36 @@ func TestValidateScriptPath_Allowed(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			if err := newTestSandbox().validate(f); err != nil {
+			if err := newTestSandboxWithLocalBinaryExecution().validate(f); err != nil {
 				t.Fatalf("expected command to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateScriptPath_BlockedWhenDisabled(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"dot-slash blocked", `./script.sh`, `"./script.sh" is not allowed`},
+		{"dot-dot-slash blocked", `../script.sh`, `"../script.sh" is not allowed`},
+		{"absolute path blocked", `/tmp/script.sh`, `"/tmp/script.sh" is not allowed`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			// Default sandbox has local binary execution disabled
+			err = newTestSandbox().validate(f)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
 			}
 		})
 	}
@@ -315,7 +353,8 @@ func TestValidateScriptPath_Blocked(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
 			}
-			err = newTestSandbox().validate(f)
+			// Even with local binary execution enabled, plain names are blocked
+			err = newTestSandboxWithLocalBinaryExecution().validate(f)
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
@@ -411,7 +450,8 @@ func TestExecuteScript(t *testing.T) {
 			if tt.name == "absolute path script" {
 				cmd = filepath.Join(dir, "abs.sh")
 			}
-			out, err := executeInDir(t, dir, cmd)
+			s := newTestSandboxWithLocalBinaryExecution()
+			out, err := executeInDirWithSandbox(t, s, dir, cmd)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got output: %q", out)
@@ -431,6 +471,21 @@ func TestExecuteScript(t *testing.T) {
 	}
 }
 
+func TestExecuteScript_BlockedWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "script.sh"), []byte("echo hello\n"), 0755)
+
+	// Default sandbox (local binary execution disabled)
+	s := newTestSandbox()
+	_, err := executeInDirWithSandbox(t, s, dir, `./script.sh`)
+	if err == nil {
+		t.Fatal("expected error when local binary execution is disabled")
+	}
+	if !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("expected 'not allowed' error, got: %v", err)
+	}
+}
+
 func TestExecuteScript_DepthLimit(t *testing.T) {
 	dir := t.TempDir()
 
@@ -446,11 +501,169 @@ func TestExecuteScript_DepthLimit(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, fmt.Sprintf("script_%d.sh", i)), []byte(content), 0755)
 	}
 
-	_, err := executeInDir(t, dir, `./script_0.sh`)
+	s := newTestSandboxWithLocalBinaryExecution()
+	_, err := executeInDirWithSandbox(t, s, dir, `./script_0.sh`)
 	if err == nil {
 		t.Fatal("expected depth limit error")
 	}
 	if !strings.Contains(err.Error(), "nesting depth exceeded") {
 		t.Fatalf("expected nesting depth error, got: %v", err)
+	}
+}
+
+func TestExecuteBinary(t *testing.T) {
+	// Check that Go compiler is available
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go compiler not available")
+	}
+
+	dir := t.TempDir()
+
+	// Write a small Go program
+	src := filepath.Join(dir, "hello.go")
+	os.WriteFile(src, []byte(`package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("hello-from-binary")
+}
+`), 0644)
+
+	// Compile it
+	binPath := filepath.Join(dir, "hello")
+	cmd := exec.Command("go", "build", "-o", binPath, src)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to compile test binary: %v\n%s", err, out)
+	}
+
+	// Execute via ./hello with local binary execution enabled
+	s := newTestSandboxWithLocalBinaryExecution()
+	out, err := executeInDirWithSandbox(t, s, dir, `./hello`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.TrimSpace(out) != "hello-from-binary" {
+		t.Errorf("expected 'hello-from-binary', got %q", out)
+	}
+}
+
+func TestExecuteBinary_BlockedWhenDisabled(t *testing.T) {
+	// Check that Go compiler is available
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go compiler not available")
+	}
+
+	dir := t.TempDir()
+
+	// Write and compile a small Go program
+	src := filepath.Join(dir, "hello.go")
+	os.WriteFile(src, []byte(`package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("should-not-run")
+}
+`), 0644)
+
+	binPath := filepath.Join(dir, "hello")
+	cmd := exec.Command("go", "build", "-o", binPath, src)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to compile test binary: %v\n%s", err, out)
+	}
+
+	// Default sandbox (local binary execution disabled)
+	s := newTestSandbox()
+	_, err := executeInDirWithSandbox(t, s, dir, `./hello`)
+	if err == nil {
+		t.Fatal("expected error when local binary execution is disabled")
+	}
+	if !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("expected 'not allowed' error, got: %v", err)
+	}
+}
+
+func TestIsBinaryExecutable(t *testing.T) {
+	dir := t.TempDir()
+
+	// Shell script should not be detected as binary
+	scriptPath := filepath.Join(dir, "script.sh")
+	os.WriteFile(scriptPath, []byte("#!/bin/bash\necho hello\n"), 0755)
+	if isBinaryExecutable(scriptPath) {
+		t.Error("shell script should not be detected as binary")
+	}
+
+	// Non-existent file should return false
+	if isBinaryExecutable(filepath.Join(dir, "nonexistent")) {
+		t.Error("non-existent file should not be detected as binary")
+	}
+
+	// Empty file should return false
+	emptyPath := filepath.Join(dir, "empty")
+	os.WriteFile(emptyPath, []byte{}, 0755)
+	if isBinaryExecutable(emptyPath) {
+		t.Error("empty file should not be detected as binary")
+	}
+
+	// Fake ELF file
+	elfPath := filepath.Join(dir, "fake-elf")
+	os.WriteFile(elfPath, []byte{0x7f, 'E', 'L', 'F', 0, 0, 0, 0}, 0755)
+	if !isBinaryExecutable(elfPath) {
+		t.Error("ELF magic should be detected as binary")
+	}
+
+	// Fake Mach-O 64-bit
+	machoPath := filepath.Join(dir, "fake-macho64")
+	os.WriteFile(machoPath, []byte{0xfe, 0xed, 0xfa, 0xcf, 0, 0, 0, 0}, 0755)
+	if !isBinaryExecutable(machoPath) {
+		t.Error("Mach-O 64-bit magic should be detected as binary")
+	}
+
+	// Fake Mach-O 32-bit
+	macho32Path := filepath.Join(dir, "fake-macho32")
+	os.WriteFile(macho32Path, []byte{0xfe, 0xed, 0xfa, 0xce, 0, 0, 0, 0}, 0755)
+	if !isBinaryExecutable(macho32Path) {
+		t.Error("Mach-O 32-bit magic should be detected as binary")
+	}
+
+	// Fake Mach-O 64-bit little-endian
+	macho64LEPath := filepath.Join(dir, "fake-macho64le")
+	os.WriteFile(macho64LEPath, []byte{0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0}, 0755)
+	if !isBinaryExecutable(macho64LEPath) {
+		t.Error("Mach-O 64-bit little-endian magic should be detected as binary")
+	}
+
+	// Fake Mach-O 32-bit little-endian
+	macho32LEPath := filepath.Join(dir, "fake-macho32le")
+	os.WriteFile(macho32LEPath, []byte{0xce, 0xfa, 0xed, 0xfe, 0, 0, 0, 0}, 0755)
+	if !isBinaryExecutable(macho32LEPath) {
+		t.Error("Mach-O 32-bit little-endian magic should be detected as binary")
+	}
+
+	// Fake fat/universal binary
+	fatPath := filepath.Join(dir, "fake-fat")
+	os.WriteFile(fatPath, []byte{0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 0}, 0755)
+	if !isBinaryExecutable(fatPath) {
+		t.Error("fat/universal binary magic should be detected as binary")
+	}
+}
+
+func TestLocalBinaryExecutionConfig_YAML(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	t.Setenv("LITE_SANDBOX_CONFIG", configPath)
+
+	data := []byte("local_binary_execution:\n  enabled: true\n")
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.LocalBinaryExecution.IsEnabled() {
+		t.Fatal("expected local binary execution to be enabled")
 	}
 }

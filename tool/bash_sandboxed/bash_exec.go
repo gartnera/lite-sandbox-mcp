@@ -38,27 +38,75 @@ func isScriptPath(name string) bool {
 	return strings.HasPrefix(name, "./") || strings.HasPrefix(name, "../") || strings.HasPrefix(name, "/")
 }
 
+// isBinaryExecutable checks if the file at path is a compiled binary
+// by reading its magic bytes. Detects ELF and Mach-O formats.
+func isBinaryExecutable(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	var magic [4]byte
+	n, err := f.Read(magic[:])
+	if err != nil || n < 4 {
+		return false
+	}
+
+	// ELF: \x7fELF
+	if magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F' {
+		return true
+	}
+
+	// Mach-O 64-bit big-endian: \xfe\xed\xfa\xcf
+	if magic[0] == 0xfe && magic[1] == 0xed && magic[2] == 0xfa && magic[3] == 0xcf {
+		return true
+	}
+
+	// Mach-O 32-bit big-endian: \xfe\xed\xfa\xce
+	if magic[0] == 0xfe && magic[1] == 0xed && magic[2] == 0xfa && magic[3] == 0xce {
+		return true
+	}
+
+	// Mach-O 64-bit little-endian: \xcf\xfa\xed\xfe
+	if magic[0] == 0xcf && magic[1] == 0xfa && magic[2] == 0xed && magic[3] == 0xfe {
+		return true
+	}
+
+	// Mach-O 32-bit little-endian: \xce\xfa\xed\xfe
+	if magic[0] == 0xce && magic[1] == 0xfa && magic[2] == 0xed && magic[3] == 0xfe {
+		return true
+	}
+
+	// Mach-O fat/universal binary: \xca\xfe\xba\xbe
+	if magic[0] == 0xca && magic[1] == 0xfe && magic[2] == 0xba && magic[3] == 0xbe {
+		return true
+	}
+
+	return false
+}
+
 // blockedBashFlags lists bash/sh flags that are not allowed.
 var blockedBashFlags = map[string]string{
-	"-i":          "interactive mode is not allowed",
+	"-i":            "interactive mode is not allowed",
 	"--interactive": "interactive mode is not allowed",
-	"-s":          "reading commands from stdin is not allowed",
-	"--init-file": "sourcing init files is not allowed",
-	"--rcfile":    "sourcing rc files is not allowed",
-	"-l":          "login shell is not allowed",
-	"--login":     "login shell is not allowed",
+	"-s":            "reading commands from stdin is not allowed",
+	"--init-file":   "sourcing init files is not allowed",
+	"--rcfile":      "sourcing rc files is not allowed",
+	"-l":            "login shell is not allowed",
+	"--login":       "login shell is not allowed",
 }
 
 // allowedBashFlags lists bash/sh flags that are safe to use.
 var allowedBashFlags = map[string]bool{
-	"-e": true,
-	"-x": true,
-	"-u": true,
-	"-n": true,
-	"-v": true,
-	"-c": true,
-	"--norc":      true,
-	"--noprofile": true,
+	"-e":           true,
+	"-x":           true,
+	"-u":           true,
+	"-n":           true,
+	"-v":           true,
+	"-c":           true,
+	"--norc":       true,
+	"--noprofile":  true,
 }
 
 // validateBashArgs validates bash/sh command arguments at the AST level.
@@ -445,6 +493,18 @@ func (s *Sandbox) buildSecurityHandlers(readAllowedPaths, writeAllowedPaths []st
 					return s.executeBash(ctx, args)
 				}
 				if isScriptPath(args[0]) {
+					if !s.getConfig().LocalBinaryExecution.IsEnabled() {
+						return fmt.Errorf("direct execution of %q is not allowed", args[0])
+					}
+					// Check if file is a compiled binary (ELF/Mach-O)
+					hc := interp.HandlerCtx(ctx)
+					path := absPath(args[0], hc.Dir)
+					if isBinaryExecutable(path) {
+						if useOSSandbox {
+							return s.execInWorker(ctx, args)
+						}
+						return interp.DefaultExecHandler(-1)(ctx, args)
+					}
 					return s.executeScript(ctx, args)
 				}
 			}

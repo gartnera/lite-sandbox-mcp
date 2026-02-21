@@ -27,3 +27,14 @@ func newTestSandboxWithRuntimesConfig(runtimesCfg *config.RuntimesConfig) *Sandb
 	s.UpdateConfig(&config.Config{Runtimes: runtimesCfg}, "")
 	return s
 }
+
+// newTestSandboxWithLocalBinaryExecution returns a Sandbox with local binary execution enabled.
+func newTestSandboxWithLocalBinaryExecution() *Sandbox {
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{
+		LocalBinaryExecution: &config.LocalBinaryExecutionConfig{
+			Enabled: boolPtr(true),
+		},
+	}, "")
+	return s
+}

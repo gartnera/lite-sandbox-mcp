@@ -289,7 +289,7 @@ func (s *Sandbox) validate(f *syntax.File) error {
 					return false
 				}
 				if !allowedCommands[cmdName] && !extra[cmdName] {
-					if !isScriptPath(cmdName) {
+					if !s.getConfig().LocalBinaryExecution.IsEnabled() || !isScriptPath(cmdName) {
 						validationErr = fmt.Errorf("command %q is not allowed", cmdName)
 						return false
 					}
