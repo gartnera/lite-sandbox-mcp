@@ -86,6 +86,16 @@ func isBinaryExecutable(path string) bool {
 	return false
 }
 
+// validateSourceArgs validates source/. command arguments at the AST level.
+// Requires a file path argument (no bare "source" which would be a no-op).
+func validateSourceArgs(s *Sandbox, args []*syntax.Word) error {
+	cmdName := wordText(args[0])
+	if len(args) < 2 {
+		return fmt.Errorf("bare %q (no file argument) is not allowed", cmdName)
+	}
+	return nil
+}
+
 // blockedBashFlags lists bash/sh flags that are not allowed.
 var blockedBashFlags = map[string]string{
 	"-i":            "interactive mode is not allowed",
@@ -485,20 +495,29 @@ func (s *Sandbox) buildSecurityHandlers(readAllowedPaths, writeAllowedPaths []st
 			return interp.DefaultOpenHandler()(ctx, path, flag, perm)
 		}),
 		interp.ExecHandler(func(ctx context.Context, args []string) error {
+			extra := s.getExtraCommands()
 			if len(args) > 0 {
-				switch args[0] {
+				cmdName := args[0]
+				// Runtime command whitelist check — catches blocked commands
+				// introduced via source/. or other dynamic execution paths.
+				if !allowedCommands[cmdName] && !extra[cmdName] {
+					if !s.getConfig().LocalBinaryExecution.IsEnabled() || !isScriptPath(cmdName) {
+						return fmt.Errorf("command %q is not allowed", cmdName)
+					}
+				}
+				switch cmdName {
 				case "awk":
 					return executeAwk(ctx, args)
 				case "bash", "sh":
 					return s.executeBash(ctx, args)
 				}
-				if isScriptPath(args[0]) {
+				if isScriptPath(cmdName) {
 					if !s.getConfig().LocalBinaryExecution.IsEnabled() {
-						return fmt.Errorf("direct execution of %q is not allowed", args[0])
+						return fmt.Errorf("direct execution of %q is not allowed", cmdName)
 					}
 					// Check if file is a compiled binary (ELF/Mach-O)
 					hc := interp.HandlerCtx(ctx)
-					path := absPath(args[0], hc.Dir)
+					path := absPath(cmdName, hc.Dir)
 					if isBinaryExecutable(path) {
 						if useOSSandbox {
 							return s.execInWorker(ctx, args)

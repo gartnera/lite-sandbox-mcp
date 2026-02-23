@@ -302,13 +302,78 @@ func validateAssigns(assigns []*syntax.Assign) error {
 	return nil
 }
 
+// collectDeclaredFunctions walks the AST and collects function names from:
+// 1. FuncDecl nodes (inline function declarations)
+// 2. source/. commands with literal file paths (read and extract FuncDecl names)
+// This allows validate() to permit calls to user-defined functions.
+func collectDeclaredFunctions(f *syntax.File, workDir string) map[string]bool {
+	funcs := make(map[string]bool)
+	syntax.Walk(f, func(node syntax.Node) bool {
+		switch n := node.(type) {
+		case *syntax.FuncDecl:
+			funcs[n.Name.Value] = true
+		case *syntax.CallExpr:
+			if len(n.Args) >= 2 {
+				cmdName := extractCommandName(n.Args[0])
+				if cmdName == "source" || cmdName == "." {
+					filePath := n.Args[1].Lit()
+					if filePath != "" && workDir != "" {
+						extractFunctionsFromFile(filePath, workDir, funcs)
+					}
+				}
+			}
+		}
+		return true
+	})
+	return funcs
+}
+
+// extractFunctionsFromFile reads a shell script file and adds any function
+// declarations to the funcs set. Errors are silently ignored (fail-open).
+func extractFunctionsFromFile(filePath, workDir string, funcs map[string]bool) {
+	path := absPath(filePath, workDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	script := string(data)
+	if strings.HasPrefix(script, "#!") {
+		if idx := strings.IndexByte(script, '\n'); idx >= 0 {
+			script = script[idx+1:]
+		}
+	}
+	sf, err := ParseBash(script)
+	if err != nil {
+		return
+	}
+	syntax.Walk(sf, func(node syntax.Node) bool {
+		if fd, ok := node.(*syntax.FuncDecl); ok {
+			funcs[fd.Name.Value] = true
+		}
+		return true
+	})
+}
+
 // validate walks the parsed AST and enforces:
-// 1. All commands must be in the allowedCommands whitelist or extra commands
+// 1. All commands must be in the allowedCommands whitelist, extra commands, or declared functions
 // 2. Redirections must pass validateRedirect (safe subset only)
 // 3. No process substitutions are permitted
 // 4. Per-command argument validators (e.g., blocking find -exec)
 // 5. Blocked environment variable assignments (PATH, LD_PRELOAD, etc.)
 func (s *Sandbox) validate(f *syntax.File) error {
+	return s.validateWithFunctions(f, nil)
+}
+
+// validateWithWorkDir validates the AST, also collecting function declarations
+// from inline FuncDecl nodes and sourced files to allow calls to user-defined functions.
+func (s *Sandbox) validateWithWorkDir(f *syntax.File, workDir string) error {
+	funcs := collectDeclaredFunctions(f, workDir)
+	return s.validateWithFunctions(f, funcs)
+}
+
+// validateWithFunctions is the core validation logic, optionally accepting
+// a set of declared function names to allow in addition to the command whitelist.
+func (s *Sandbox) validateWithFunctions(f *syntax.File, declaredFuncs map[string]bool) error {
 	extra := s.getExtraCommands()
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
@@ -334,7 +399,7 @@ func (s *Sandbox) validate(f *syntax.File) error {
 					validationErr = fmt.Errorf("dynamic command names are not allowed")
 					return false
 				}
-				if !allowedCommands[cmdName] && !extra[cmdName] {
+				if !allowedCommands[cmdName] && !extra[cmdName] && !declaredFuncs[cmdName] {
 					if !s.getConfig().LocalBinaryExecution.IsEnabled() || !isScriptPath(cmdName) {
 						validationErr = fmt.Errorf("command %q is not allowed", cmdName)
 						return false
@@ -380,7 +445,7 @@ func (s *Sandbox) ValidateCommand(command string, workDir string, readAllowedPat
 	if err != nil {
 		return err
 	}
-	if err := s.validate(f); err != nil {
+	if err := s.validateWithWorkDir(f, workDir); err != nil {
 		return err
 	}
 	if err := validatePaths(f, workDir, readAllowedPaths, writeAllowedPaths); err != nil {
@@ -427,6 +492,8 @@ func (s *Sandbox) validateScriptContents(f *syntax.File, workDir string, readAll
 			validationErr = s.validateScriptFile(cmdName, workDir, readAllowedPaths, writeAllowedPaths, depth)
 		case cmdName == "bash" || cmdName == "sh":
 			validationErr = s.validateBashScriptArg(ce.Args, workDir, readAllowedPaths, writeAllowedPaths, depth)
+		case cmdName == "source" || cmdName == ".":
+			validationErr = s.validateSourceFileArg(ce.Args, workDir, readAllowedPaths, writeAllowedPaths, depth)
 		}
 
 		return validationErr == nil
@@ -514,6 +581,19 @@ func (s *Sandbox) validateBashScriptArg(args []*syntax.Word, workDir string, rea
 	return nil
 }
 
+// validateSourceFileArg extracts the file argument from source/. args
+// and validates the file contents recursively.
+func (s *Sandbox) validateSourceFileArg(args []*syntax.Word, workDir string, readAllowedPaths, writeAllowedPaths []string, depth int) error {
+	if len(args) < 2 {
+		return nil
+	}
+	filePath := wordText(args[1])
+	if filePath == "" {
+		return nil // dynamic path, can't validate statically
+	}
+	return s.validateScriptFile(filePath, workDir, readAllowedPaths, writeAllowedPaths, depth)
+}
+
 // Execute parses, validates, and executes a bash command.
 // workDir is the working directory for the command and for resolving relative paths.
 // readAllowedPaths are absolute directories that read-only commands may access.
@@ -528,7 +608,7 @@ func (s *Sandbox) Execute(ctx context.Context, command string, workDir string, r
 		return "", err
 	}
 
-	if err := s.validate(f); err != nil {
+	if err := s.validateWithWorkDir(f, workDir); err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 

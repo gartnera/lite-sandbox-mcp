@@ -102,6 +102,10 @@ var allowedCommands = map[string]bool{
 	"awk":    true,
 	"base64": true,
 
+	// Shell sourcing (file validated via OpenHandler + arg validators)
+	"source": true,
+	".":      true,
+
 	// Shell builtins (non-destructive, no escape capability)
 	"test":     true,
 	"[":        true,
@@ -224,9 +228,11 @@ var writeCommands = map[string]bool{
 // validator here to block those flags while still allowing the command itself.
 // Validators receive the *Sandbox so they can access config (e.g., runtimes, git).
 var commandArgValidators = map[string]func(s *Sandbox, args []*syntax.Word) error{
-	"awk":  validateAwkArgs,
-	"bash": validateBashCommand,
-	"sh":   validateBashCommand,
+	"awk":    validateAwkArgs,
+	"bash":   validateBashCommand,
+	"sh":     validateBashCommand,
+	"source": validateSourceCommand,
+	".":      validateSourceCommand,
 	"rg":    validateRgArgs,
 	"find":  validateFindArgs,
 	"tar":   validateTarArgs,
@@ -265,6 +271,10 @@ func validatePnpmCommand(s *Sandbox, args []*syntax.Word) error {
 
 func validateBashCommand(s *Sandbox, args []*syntax.Word) error {
 	return validateBashArgs(s, args)
+}
+
+func validateSourceCommand(s *Sandbox, args []*syntax.Word) error {
+	return validateSourceArgs(s, args)
 }
 
 func validateCargoCommand(s *Sandbox, args []*syntax.Word) error {

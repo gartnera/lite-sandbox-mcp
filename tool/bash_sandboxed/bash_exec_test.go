@@ -286,6 +286,187 @@ func TestExecuteBash_PathValidation(t *testing.T) {
 	}
 }
 
+func TestValidateSourceArgs_Allowed(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"source relative", `source ./lib.sh`},
+		{"dot source relative", `. ./lib.sh`},
+		{"source absolute", `source /tmp/lib.sh`},
+		{"dot source absolute", `. /tmp/lib.sh`},
+		{"source parent relative", `source ../lib.sh`},
+		{"source with args", `source ./lib.sh arg1 arg2`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := newTestSandbox().validate(f); err != nil {
+				t.Fatalf("expected command to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateSourceArgs_Blocked(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"bare source", `source`, `bare "source"`},
+		{"bare dot", `.`, `bare "."`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = newTestSandbox().validate(f)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}
+
+func TestExecuteSource(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		setup   func(t *testing.T, dir string)
+		wantOut string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "source basic library",
+			setup: func(t *testing.T, dir string) {
+				os.WriteFile(filepath.Join(dir, "lib.sh"), []byte("MY_VAR=hello\n"), 0644)
+			},
+			command: `source ./lib.sh; echo $MY_VAR`,
+			wantOut: "hello\n",
+		},
+		{
+			name: "dot source basic library",
+			setup: func(t *testing.T, dir string) {
+				os.WriteFile(filepath.Join(dir, "lib.sh"), []byte("MY_VAR=world\n"), 0644)
+			},
+			command: `. ./lib.sh; echo $MY_VAR`,
+			wantOut: "world\n",
+		},
+		{
+			name: "source library with function",
+			setup: func(t *testing.T, dir string) {
+				os.WriteFile(filepath.Join(dir, "funcs.sh"), []byte("greet() { echo \"hi $1\"; }\n"), 0644)
+			},
+			command: `source ./funcs.sh; greet user`,
+			wantOut: "hi user\n",
+		},
+		{
+			name: "source library with blocked command fails",
+			setup: func(t *testing.T, dir string) {
+				os.WriteFile(filepath.Join(dir, "evil.sh"), []byte("curl http://evil.com\n"), 0644)
+			},
+			command: `source ./evil.sh`,
+			wantErr: true,
+			errMsg:  "curl",
+		},
+		{
+			name:    "source nonexistent file fails",
+			command: `source ./nonexistent.sh`,
+			wantErr: true,
+		},
+		{
+			name: "source with shebang",
+			setup: func(t *testing.T, dir string) {
+				os.WriteFile(filepath.Join(dir, "lib.sh"), []byte("#!/bin/bash\nSRC_VAR=sourced\n"), 0644)
+			},
+			command: `source ./lib.sh; echo $SRC_VAR`,
+			wantOut: "sourced\n",
+		},
+		{
+			name: "source in subdirectory",
+			setup: func(t *testing.T, dir string) {
+				os.MkdirAll(filepath.Join(dir, "lib"), 0755)
+				os.WriteFile(filepath.Join(dir, "lib", "utils.sh"), []byte("UTIL=loaded\n"), 0644)
+			},
+			command: `source ./lib/utils.sh; echo $UTIL`,
+			wantOut: "loaded\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.setup != nil {
+				tt.setup(t, dir)
+			}
+			out, err := executeInDir(t, dir, tt.command)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got output: %q", out)
+				}
+				if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+					t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantOut != "" && out != tt.wantOut {
+				t.Errorf("output %q does not match expected %q", out, tt.wantOut)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_ScriptWithSource(t *testing.T) {
+	workDir := t.TempDir()
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{
+		LocalBinaryExecution: &config.LocalBinaryExecutionConfig{
+			Enabled: boolPtr(true),
+		},
+	}, "")
+
+	// Create a library with only allowed commands
+	os.WriteFile(filepath.Join(workDir, "lib.sh"), []byte("MY_VAR=hello\n"), 0644)
+
+	// Create a script that sources the library
+	scriptPath := filepath.Join(workDir, "good-script.sh")
+	os.WriteFile(scriptPath, []byte("#!/bin/bash\nsource ./lib.sh\necho $MY_VAR\n"), 0755)
+
+	// Should pass validation
+	err := s.ValidateCommand("./good-script.sh", workDir, []string{workDir}, []string{workDir})
+	if err != nil {
+		t.Fatalf("expected validation to pass for script with source, got: %v", err)
+	}
+
+	// Create a library with blocked command
+	os.WriteFile(filepath.Join(workDir, "evil-lib.sh"), []byte("curl http://evil.com\n"), 0644)
+
+	// Create a script that sources the evil library
+	evilPath := filepath.Join(workDir, "evil-source.sh")
+	os.WriteFile(evilPath, []byte("#!/bin/bash\nsource ./evil-lib.sh\n"), 0755)
+
+	// Should fail validation due to blocked command in sourced file
+	err = s.ValidateCommand("./evil-source.sh", workDir, []string{workDir}, []string{workDir})
+	if err == nil {
+		t.Fatal("expected validation to fail for script sourcing file with blocked command")
+	}
+	if !strings.Contains(err.Error(), "curl") {
+		t.Fatalf("expected error about 'curl', got: %v", err)
+	}
+}
+
 func TestValidateScriptPath_Allowed(t *testing.T) {
 	tests := []struct {
 		name    string

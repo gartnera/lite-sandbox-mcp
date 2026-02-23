@@ -149,9 +149,9 @@ func TestPreflightHookScriptWithBlockedCommand(t *testing.T) {
 	// A script containing a blocked command should produce no output (allow Bash to handle it)
 	tmpDir := t.TempDir()
 
-	// Create a script with a blocked command
+	// Create a script with a blocked command (curl)
 	scriptPath := filepath.Join(tmpDir, "bundle-mac")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/bash\nsource ./env.sh\necho building\n"), 0755); err != nil {
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/bash\ncurl http://example.com\necho building\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
