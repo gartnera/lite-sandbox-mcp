@@ -43,6 +43,15 @@ var runtimesShowCmd = &cobra.Command{
 			fmt.Printf("    enabled: %v\n", false)
 			fmt.Printf("    publish: %v\n", false)
 		}
+		if cfg.Runtimes.Rust != nil {
+			fmt.Println("  rust:")
+			fmt.Printf("    enabled: %v\n", cfg.Runtimes.Rust.RustEnabled())
+			fmt.Printf("    publish: %v\n", cfg.Runtimes.Rust.RustPublish())
+		} else {
+			fmt.Println("  rust: (defaults)")
+			fmt.Printf("    enabled: %v\n", false)
+			fmt.Printf("    publish: %v\n", false)
+		}
 		return nil
 	},
 }
@@ -239,6 +248,102 @@ var pnpmRuntimeDisableCmd = &cobra.Command{
 	},
 }
 
+// Rust runtime commands
+var rustRuntimeCmd = &cobra.Command{
+	Use:   "rust",
+	Short: "Manage Rust runtime permission settings",
+}
+
+var rustRuntimeShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Show current Rust runtime permission settings",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		r := &config.RustConfig{}
+		if cfg.Runtimes != nil && cfg.Runtimes.Rust != nil {
+			r = cfg.Runtimes.Rust
+		}
+		fmt.Printf("enabled: %v\n", r.RustEnabled())
+		fmt.Printf("publish: %v\n", r.RustPublish())
+		return nil
+	},
+}
+
+var rustRuntimeEnableCmd = &cobra.Command{
+	Use:   "enable",
+	Short: "Enable Rust runtime commands (cargo, rustc)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		withPublish, _ := cmd.Flags().GetBool("with-publish")
+
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		if cfg.Runtimes == nil {
+			cfg.Runtimes = &config.RuntimesConfig{}
+		}
+		if cfg.Runtimes.Rust == nil {
+			cfg.Runtimes.Rust = &config.RustConfig{}
+		}
+
+		trueVal := true
+		cfg.Runtimes.Rust.Enabled = &trueVal
+
+		if withPublish {
+			cfg.Runtimes.Rust.Publish = &trueVal
+		}
+
+		if err := saveConfig(cfg); err != nil {
+			return err
+		}
+
+		fmt.Println("runtimes.rust.enabled set to true")
+		if withPublish {
+			fmt.Println("runtimes.rust.publish set to true")
+		}
+		return nil
+	},
+}
+
+var rustRuntimeDisableCmd = &cobra.Command{
+	Use:   "disable",
+	Short: "Disable Rust runtime commands",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		withPublish, _ := cmd.Flags().GetBool("with-publish")
+
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		if cfg.Runtimes == nil {
+			cfg.Runtimes = &config.RuntimesConfig{}
+		}
+		if cfg.Runtimes.Rust == nil {
+			cfg.Runtimes.Rust = &config.RustConfig{}
+		}
+
+		falseVal := false
+		cfg.Runtimes.Rust.Enabled = &falseVal
+
+		if withPublish {
+			cfg.Runtimes.Rust.Publish = &falseVal
+		}
+
+		if err := saveConfig(cfg); err != nil {
+			return err
+		}
+
+		fmt.Println("runtimes.rust.enabled set to false")
+		if withPublish {
+			fmt.Println("runtimes.rust.publish set to false")
+		}
+		return nil
+	},
+}
+
 func init() {
 	// Add --with-generate flag to enable/disable commands
 	goRuntimeEnableCmd.Flags().Bool("with-generate", false, "Also enable go generate")
@@ -258,10 +363,20 @@ func init() {
 	pnpmRuntimeCmd.AddCommand(pnpmRuntimeEnableCmd)
 	pnpmRuntimeCmd.AddCommand(pnpmRuntimeDisableCmd)
 
+	// Add --with-publish flag to rust enable/disable commands
+	rustRuntimeEnableCmd.Flags().Bool("with-publish", false, "Also enable cargo publish")
+	rustRuntimeDisableCmd.Flags().Bool("with-publish", false, "Also disable cargo publish")
+
+	// Add rust subcommands
+	rustRuntimeCmd.AddCommand(rustRuntimeShowCmd)
+	rustRuntimeCmd.AddCommand(rustRuntimeEnableCmd)
+	rustRuntimeCmd.AddCommand(rustRuntimeDisableCmd)
+
 	// Add runtimes subcommands
 	runtimesCmd.AddCommand(runtimesShowCmd)
 	runtimesCmd.AddCommand(goRuntimeCmd)
 	runtimesCmd.AddCommand(pnpmRuntimeCmd)
+	runtimesCmd.AddCommand(rustRuntimeCmd)
 
 	// Add runtimes to config
 	configCmd.AddCommand(runtimesCmd)

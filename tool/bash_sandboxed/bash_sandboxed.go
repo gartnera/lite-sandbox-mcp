@@ -171,6 +171,12 @@ func detectRuntimeBinds(runtimes *config.RuntimesConfig) []string {
 		binds = append(binds, pnpmBinds...)
 	}
 
+	// Detect Rust paths if Rust runtime is enabled
+	if runtimes.Rust != nil && runtimes.Rust.RustEnabled() {
+		rustBinds := detectRustBinds()
+		binds = append(binds, rustBinds...)
+	}
+
 	return binds
 }
 
@@ -217,6 +223,46 @@ func detectPnpmBinds() []string {
 
 	paths := []string{storePath}
 	slog.Info("detected pnpm runtime paths", "paths", paths)
+	return paths
+}
+
+// detectRustBinds detects Rust/Cargo paths that need to be writable.
+// Returns CARGO_HOME (registry, git) and RUSTUP_HOME directories.
+func detectRustBinds() []string {
+	var paths []string
+
+	// Detect CARGO_HOME (defaults to ~/.cargo)
+	cargoHome := os.Getenv("CARGO_HOME")
+	if cargoHome == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			cargoHome = home + "/.cargo"
+		}
+	}
+	if cargoHome != "" {
+		if _, err := os.Stat(cargoHome); err == nil {
+			paths = append(paths, cargoHome)
+		}
+	}
+
+	// Detect RUSTUP_HOME (defaults to ~/.rustup)
+	rustupHome := os.Getenv("RUSTUP_HOME")
+	if rustupHome == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			rustupHome = home + "/.rustup"
+		}
+	}
+	if rustupHome != "" {
+		if _, err := os.Stat(rustupHome); err == nil {
+			paths = append(paths, rustupHome)
+		}
+	}
+
+	if len(paths) > 0 {
+		slog.Info("detected Rust runtime paths", "paths", paths)
+	}
+
 	return paths
 }
 

@@ -153,10 +153,33 @@ func (l *LocalBinaryExecutionConfig) IsEnabled() bool {
 	return *l.Enabled
 }
 
+// RustConfig controls granular Rust runtime permission levels.
+type RustConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+	Publish *bool `yaml:"publish,omitempty"`
+}
+
+// RustEnabled returns whether cargo/rustc commands are allowed (default: false).
+func (r *RustConfig) RustEnabled() bool {
+	if r == nil || r.Enabled == nil {
+		return false
+	}
+	return *r.Enabled
+}
+
+// RustPublish returns whether cargo publish is allowed (default: false).
+func (r *RustConfig) RustPublish() bool {
+	if r == nil || r.Publish == nil {
+		return false
+	}
+	return *r.Publish
+}
+
 // RuntimesConfig controls code execution runtime permissions.
 type RuntimesConfig struct {
 	Go   *GoConfig   `yaml:"go,omitempty"`
 	Pnpm *PnpmConfig `yaml:"pnpm,omitempty"`
+	Rust *RustConfig `yaml:"rust,omitempty"`
 }
 
 // Config holds all user configuration. New fields can be added over time;

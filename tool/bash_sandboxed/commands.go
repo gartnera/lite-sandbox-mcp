@@ -162,8 +162,10 @@ var allowedCommands = map[string]bool{
 	"sh":   true,
 
 	// Runtimes (config-gated, validated by commandArgValidators)
-	"go":   true,
-	"pnpm": true,
+	"go":    true,
+	"pnpm":  true,
+	"cargo": true,
+	"rustc": true,
 
 	// Cloud CLI tools (config-gated, credentials via IMDS)
 	"aws": true,
@@ -235,6 +237,8 @@ var commandArgValidators = map[string]func(s *Sandbox, args []*syntax.Word) erro
 	"git":   validateGitCommand,
 	"go":    validateGoCommand,
 	"pnpm":  validatePnpmCommand,
+	"cargo": validateCargoCommand,
+	"rustc": validateRustcCommand,
 	"aws":   validateAWSCommand,
 	"xargs": validateXargsArgs,
 }
@@ -261,6 +265,22 @@ func validatePnpmCommand(s *Sandbox, args []*syntax.Word) error {
 
 func validateBashCommand(s *Sandbox, args []*syntax.Word) error {
 	return validateBashArgs(s, args)
+}
+
+func validateCargoCommand(s *Sandbox, args []*syntax.Word) error {
+	cfg := s.getConfig()
+	if cfg.Runtimes == nil || cfg.Runtimes.Rust == nil || !cfg.Runtimes.Rust.RustEnabled() {
+		return fmt.Errorf("command \"cargo\" is not allowed (runtimes.rust.enabled is disabled)")
+	}
+	return validateCargoArgs(args, cfg.Runtimes.Rust)
+}
+
+func validateRustcCommand(s *Sandbox, args []*syntax.Word) error {
+	cfg := s.getConfig()
+	if cfg.Runtimes == nil || cfg.Runtimes.Rust == nil || !cfg.Runtimes.Rust.RustEnabled() {
+		return fmt.Errorf("command \"rustc\" is not allowed (runtimes.rust.enabled is disabled)")
+	}
+	return nil
 }
 
 func validateAWSCommand(s *Sandbox, args []*syntax.Word) error {
