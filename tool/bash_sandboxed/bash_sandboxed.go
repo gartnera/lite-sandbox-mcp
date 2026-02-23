@@ -389,6 +389,128 @@ func (s *Sandbox) ValidateCommand(command string, workDir string, readAllowedPat
 	if err := validateRedirectPaths(f, workDir, readAllowedPaths, writeAllowedPaths); err != nil {
 		return err
 	}
+	if err := s.validateScriptContents(f, workDir, readAllowedPaths, writeAllowedPaths, 0); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateScriptContents walks the AST looking for script invocations
+// (direct script paths like ./script.sh or bash/sh with a script file),
+// reads the script contents, and validates them recursively. This catches
+// cases where a script file contains blocked commands that would fail at
+// runtime, allowing the preflight hook to let Bash handle the command directly.
+// Errors reading files are silently ignored (fail-open) since the file may
+// not exist yet at preflight time.
+func (s *Sandbox) validateScriptContents(f *syntax.File, workDir string, readAllowedPaths, writeAllowedPaths []string, depth int) error {
+	if depth >= maxBashDepth {
+		return fmt.Errorf("script nesting depth exceeded (max %d)", maxBashDepth)
+	}
+
+	var validationErr error
+	syntax.Walk(f, func(node syntax.Node) bool {
+		if validationErr != nil {
+			return false
+		}
+		ce, ok := node.(*syntax.CallExpr)
+		if !ok || len(ce.Args) == 0 {
+			return true
+		}
+
+		cmdName := extractCommandName(ce.Args[0])
+		if cmdName == "" {
+			return true
+		}
+
+		switch {
+		case isScriptPath(cmdName):
+			validationErr = s.validateScriptFile(cmdName, workDir, readAllowedPaths, writeAllowedPaths, depth)
+		case cmdName == "bash" || cmdName == "sh":
+			validationErr = s.validateBashScriptArg(ce.Args, workDir, readAllowedPaths, writeAllowedPaths, depth)
+		}
+
+		return validationErr == nil
+	})
+	return validationErr
+}
+
+// validateScriptFile reads a script file path, parses and validates its contents.
+func (s *Sandbox) validateScriptFile(scriptPath, workDir string, readAllowedPaths, writeAllowedPaths []string, depth int) error {
+	path := absPath(scriptPath, workDir)
+	if isBinaryExecutable(path) {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil // fail-open: file may not exist at preflight time
+	}
+	script := string(data)
+	if strings.HasPrefix(script, "#!") {
+		if idx := strings.IndexByte(script, '\n'); idx >= 0 {
+			script = script[idx+1:]
+		} else {
+			script = ""
+		}
+	}
+	sf, err := ParseBash(script)
+	if err != nil {
+		return nil // fail-open: unparseable scripts handled at runtime
+	}
+	if err := s.validate(sf); err != nil {
+		return fmt.Errorf("script %s: %w", scriptPath, err)
+	}
+	if err := validatePaths(sf, workDir, readAllowedPaths, writeAllowedPaths); err != nil {
+		return fmt.Errorf("script %s: %w", scriptPath, err)
+	}
+	if err := validateRedirectPaths(sf, workDir, readAllowedPaths, writeAllowedPaths); err != nil {
+		return fmt.Errorf("script %s: %w", scriptPath, err)
+	}
+	return s.validateScriptContents(sf, workDir, readAllowedPaths, writeAllowedPaths, depth+1)
+}
+
+// validateBashScriptArg extracts the script file argument from bash/sh args
+// (when not using -c) and validates the script contents.
+func (s *Sandbox) validateBashScriptArg(args []*syntax.Word, workDir string, readAllowedPaths, writeAllowedPaths []string, depth int) error {
+	i := 1
+	foundC := false
+	for i < len(args) {
+		text := wordText(args[i])
+		if text == "" {
+			i++
+			continue
+		}
+		if text == "-c" {
+			foundC = true
+			break
+		}
+		if text == "-o" {
+			i += 2
+			continue
+		}
+		// Combined short flags
+		if len(text) > 1 && text[0] == '-' && text[1] != '-' {
+			for _, ch := range text[1:] {
+				if string(ch) == "c" {
+					foundC = true
+				}
+			}
+			if foundC {
+				break
+			}
+			i++
+			continue
+		}
+		// Known flags
+		if strings.HasPrefix(text, "-") || strings.HasPrefix(text, "+") {
+			i++
+			continue
+		}
+		// First non-flag argument is the script file
+		if !foundC {
+			return s.validateScriptFile(text, workDir, readAllowedPaths, writeAllowedPaths, depth)
+		}
+		i++
+	}
 	return nil
 }
 

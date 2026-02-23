@@ -145,6 +145,59 @@ func capturePreflightHook(t *testing.T, inputData []byte) string {
 	return string(buf[:n])
 }
 
+func TestPreflightHookScriptWithBlockedCommand(t *testing.T) {
+	// A script containing a blocked command should produce no output (allow Bash to handle it)
+	tmpDir := t.TempDir()
+
+	// Create a script with a blocked command
+	scriptPath := filepath.Join(tmpDir, "bundle-mac")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/bash\nsource ./env.sh\necho building\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	input := preflightHookInput{
+		ToolName: "Bash",
+		CWD:      tmpDir,
+	}
+	input.ToolInput.Command = "./bundle-mac -i"
+
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output := capturePreflightHook(t, inputJSON)
+	if output != "" {
+		t.Errorf("expected empty output for script with blocked command (should fall through to Bash), got: %s", output)
+	}
+}
+
+func TestPreflightHookBashScriptWithBlockedCommand(t *testing.T) {
+	// bash ./script.sh where script contains blocked commands should produce no output
+	tmpDir := t.TempDir()
+
+	scriptPath := filepath.Join(tmpDir, "setup.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/bash\ncurl http://example.com\necho done\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	input := preflightHookInput{
+		ToolName: "Bash",
+		CWD:      tmpDir,
+	}
+	input.ToolInput.Command = "bash ./setup.sh"
+
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output := capturePreflightHook(t, inputJSON)
+	if output != "" {
+		t.Errorf("expected empty output for bash script with blocked command, got: %s", output)
+	}
+}
+
 func TestConfigurePreflightHook(t *testing.T) {
 	tmpDir := t.TempDir()
 	settingsPath := filepath.Join(tmpDir, "settings.json")

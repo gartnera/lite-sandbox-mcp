@@ -2,6 +2,8 @@ package bash_sandboxed
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -532,6 +534,124 @@ func TestValidateCommand(t *testing.T) {
 	err = s.ValidateCommand("cat /etc/passwd", workDir, []string{workDir}, []string{workDir})
 	if err == nil {
 		t.Fatal("expected path outside allowed dirs to fail validation")
+	}
+}
+
+func TestValidateCommand_ScriptWithBlockedCommand(t *testing.T) {
+	workDir := t.TempDir()
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{
+		LocalBinaryExecution: &config.LocalBinaryExecutionConfig{
+			Enabled: boolPtr(true),
+		},
+	}, "")
+
+	// Create a script that uses a blocked command (source)
+	scriptPath := filepath.Join(workDir, "bad-script.sh")
+	os.WriteFile(scriptPath, []byte("#!/bin/bash\nsource ./env.sh\necho hello\n"), 0755)
+
+	// Direct script invocation should fail validation
+	err := s.ValidateCommand("./bad-script.sh", workDir, []string{workDir}, []string{workDir})
+	if err == nil {
+		t.Fatal("expected validation to fail for script containing 'source'")
+	}
+	if !strings.Contains(err.Error(), "source") {
+		t.Fatalf("expected error about 'source', got: %v", err)
+	}
+
+	// bash with script file should also fail
+	err = s.ValidateCommand("bash ./bad-script.sh", workDir, []string{workDir}, []string{workDir})
+	if err == nil {
+		t.Fatal("expected validation to fail for bash with script containing 'source'")
+	}
+	if !strings.Contains(err.Error(), "source") {
+		t.Fatalf("expected error about 'source', got: %v", err)
+	}
+}
+
+func TestValidateCommand_ScriptWithAllowedCommands(t *testing.T) {
+	workDir := t.TempDir()
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{
+		LocalBinaryExecution: &config.LocalBinaryExecutionConfig{
+			Enabled: boolPtr(true),
+		},
+	}, "")
+
+	// Create a script with only allowed commands
+	scriptPath := filepath.Join(workDir, "good-script.sh")
+	os.WriteFile(scriptPath, []byte("#!/bin/bash\necho hello\nls -la\n"), 0755)
+
+	err := s.ValidateCommand("./good-script.sh", workDir, []string{workDir}, []string{workDir})
+	if err != nil {
+		t.Fatalf("expected validation to pass for script with allowed commands, got: %v", err)
+	}
+
+	err = s.ValidateCommand("bash ./good-script.sh", workDir, []string{workDir}, []string{workDir})
+	if err != nil {
+		t.Fatalf("expected validation to pass for bash with allowed script, got: %v", err)
+	}
+}
+
+func TestValidateCommand_ScriptNotFound(t *testing.T) {
+	workDir := t.TempDir()
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{
+		LocalBinaryExecution: &config.LocalBinaryExecutionConfig{
+			Enabled: boolPtr(true),
+		},
+	}, "")
+
+	// Script doesn't exist — should fail-open (no error)
+	err := s.ValidateCommand("./nonexistent.sh", workDir, []string{workDir}, []string{workDir})
+	if err != nil {
+		t.Fatalf("expected fail-open for nonexistent script, got: %v", err)
+	}
+}
+
+func TestValidateCommand_NestedScriptWithBlockedCommand(t *testing.T) {
+	workDir := t.TempDir()
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{
+		LocalBinaryExecution: &config.LocalBinaryExecutionConfig{
+			Enabled: boolPtr(true),
+		},
+	}, "")
+
+	// Create inner script with blocked command
+	innerPath := filepath.Join(workDir, "inner.sh")
+	os.WriteFile(innerPath, []byte("#!/bin/bash\ncurl http://example.com\n"), 0755)
+
+	// Create outer script that calls inner
+	outerPath := filepath.Join(workDir, "outer.sh")
+	os.WriteFile(outerPath, []byte("#!/bin/bash\n./inner.sh\n"), 0755)
+
+	err := s.ValidateCommand("./outer.sh", workDir, []string{workDir}, []string{workDir})
+	if err == nil {
+		t.Fatal("expected validation to fail for nested script with blocked command")
+	}
+	if !strings.Contains(err.Error(), "curl") {
+		t.Fatalf("expected error about 'curl', got: %v", err)
+	}
+}
+
+func TestValidateCommand_BashWithFlags(t *testing.T) {
+	workDir := t.TempDir()
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{
+		LocalBinaryExecution: &config.LocalBinaryExecutionConfig{
+			Enabled: boolPtr(true),
+		},
+	}, "")
+
+	// Create a script with blocked command
+	scriptPath := filepath.Join(workDir, "script.sh")
+	os.WriteFile(scriptPath, []byte("#!/bin/bash\npython -c 'print(1)'\n"), 0755)
+
+	// bash -e ./script.sh should fail
+	err := s.ValidateCommand("bash -e ./script.sh", workDir, []string{workDir}, []string{workDir})
+	if err == nil {
+		t.Fatal("expected validation to fail for bash -e with script containing blocked command")
 	}
 }
 
