@@ -199,7 +199,7 @@ func TestPreflightHookBashScriptWithBlockedCommand(t *testing.T) {
 }
 
 func TestPreflightHookDangerouslyDisableSandbox(t *testing.T) {
-	// A valid command with dangerouslyDisableSandbox should produce no output (allow through)
+	// A valid command with dangerouslyDisableSandbox should prompt for user approval
 	input := preflightHookInput{
 		ToolName: "Bash",
 		CWD:      t.TempDir(),
@@ -213,8 +213,17 @@ func TestPreflightHookDangerouslyDisableSandbox(t *testing.T) {
 	}
 
 	output := capturePreflightHook(t, inputJSON)
-	if output != "" {
-		t.Errorf("expected empty output when dangerouslyDisableSandbox is true, got: %s", output)
+	if output == "" {
+		t.Fatal("expected ask response for dangerouslyDisableSandbox, got empty output")
+	}
+
+	var resp preflightHookOutput
+	if err := json.Unmarshal([]byte(output), &resp); err != nil {
+		t.Fatalf("failed to parse response JSON: %v", err)
+	}
+
+	if resp.HookSpecificOutput.PermissionDecision != "ask" {
+		t.Errorf("expected ask, got %s", resp.HookSpecificOutput.PermissionDecision)
 	}
 }
 

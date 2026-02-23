@@ -79,9 +79,15 @@ func runPreflightHook() error {
 		return nil
 	}
 
-	// Allow through if the LLM is explicitly bypassing the sandbox
+	// Escalate to user approval if the LLM is explicitly bypassing the sandbox
 	if input.ToolInput.DangerouslyDisableSandbox {
-		return nil
+		output := preflightHookOutput{}
+		output.HookSpecificOutput.HookEventName = "PreToolUse"
+		output.HookSpecificOutput.PermissionDecision = "ask"
+		output.HookSpecificOutput.PermissionDecisionReason = "This command is bypassing the lite-sandbox (dangerouslyDisableSandbox=true). Please confirm execution."
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(output)
 	}
 
 	command := input.ToolInput.Command
