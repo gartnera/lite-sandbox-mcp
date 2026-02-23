@@ -198,6 +198,26 @@ func TestPreflightHookBashScriptWithBlockedCommand(t *testing.T) {
 	}
 }
 
+func TestPreflightHookDangerouslyDisableSandbox(t *testing.T) {
+	// A valid command with dangerouslyDisableSandbox should produce no output (allow through)
+	input := preflightHookInput{
+		ToolName: "Bash",
+		CWD:      t.TempDir(),
+	}
+	input.ToolInput.Command = "echo hello"
+	input.ToolInput.DangerouslyDisableSandbox = true
+
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output := capturePreflightHook(t, inputJSON)
+	if output != "" {
+		t.Errorf("expected empty output when dangerouslyDisableSandbox is true, got: %s", output)
+	}
+}
+
 func TestConfigurePreflightHook(t *testing.T) {
 	tmpDir := t.TempDir()
 	settingsPath := filepath.Join(tmpDir, "settings.json")

@@ -236,6 +236,58 @@ func TestBashSandboxedTool_TimeoutExceedsMaximum(t *testing.T) {
 	}
 }
 
+func TestBashSandboxedTool_RuntimeErrorContainsFallbackHint(t *testing.T) {
+	c := setupClient(t)
+	ctx := context.Background()
+
+	// `false` is an allowed command that always exits with status 1
+	result, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "bash",
+			Arguments: map[string]any{"command": "false"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool failed: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for `false` command")
+	}
+	if len(result.Content) > 0 {
+		if text, ok := result.Content[0].(mcp.TextContent); ok {
+			if !strings.Contains(text.Text, "dangerouslyDisableSandbox") {
+				t.Fatalf("expected fallback hint in runtime error, got: %q", text.Text)
+			}
+		}
+	}
+}
+
+func TestBashSandboxedTool_ValidationErrorNoFallbackHint(t *testing.T) {
+	c := setupClient(t)
+	ctx := context.Background()
+
+	// `python` is not in the allowed commands whitelist
+	result, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "bash",
+			Arguments: map[string]any{"command": "python evil.py"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool failed: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for disallowed command")
+	}
+	if len(result.Content) > 0 {
+		if text, ok := result.Content[0].(mcp.TextContent); ok {
+			if strings.Contains(text.Text, "dangerouslyDisableSandbox") {
+				t.Fatalf("validation errors should NOT contain fallback hint, got: %q", text.Text)
+			}
+		}
+	}
+}
+
 func TestBashSandboxedTool_NegativeTimeout(t *testing.T) {
 	c := setupClient(t)
 	ctx := context.Background()

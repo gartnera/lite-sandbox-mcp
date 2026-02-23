@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -16,6 +17,9 @@ import (
 	"github.com/gartnera/lite-sandbox/internal/imds"
 	bash_sandboxed "github.com/gartnera/lite-sandbox/tool/bash_sandboxed"
 )
+
+const runtimeErrorFallbackHint = "\n\nNote: This command passed sandbox validation but failed during execution. " +
+	"You may retry this command using the Bash tool with dangerouslyDisableSandbox set to true."
 
 var serveCmd = &cobra.Command{
 	Use:   "serve-mcp",
@@ -43,7 +47,7 @@ func newMCPServer(sandbox *bash_sandboxed.Sandbox) *server.MCPServer {
 
 	bashTool := mcp.NewTool(
 		"bash",
-		mcp.WithDescription("Execute a bash command in a lightweight sandbox. The command is parsed and validated before execution."),
+		mcp.WithDescription("Execute a bash command in a lightweight sandbox. The command is parsed and validated before execution. If a command fails at runtime (not validation), you may retry it using the Bash tool with dangerouslyDisableSandbox set to true."),
 		mcp.WithString("command",
 			mcp.Description("The bash command to execute"),
 			mcp.Required(),
@@ -89,7 +93,11 @@ func newMCPServer(sandbox *bash_sandboxed.Sandbox) *server.MCPServer {
 		writePaths := append([]string{cwd}, sandbox.ConfigWritePaths()...)
 		output, err := sandbox.Execute(timeoutCtx, command, cwd, readPaths, writePaths)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			errMsg := err.Error()
+			if strings.HasPrefix(errMsg, "command failed:") {
+				errMsg += runtimeErrorFallbackHint
+			}
+			return mcp.NewToolResultError(errMsg), nil
 		}
 
 		return mcp.NewToolResultText(output), nil

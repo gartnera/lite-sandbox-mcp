@@ -38,7 +38,8 @@ type preflightHookInput struct {
 	SessionID string `json:"session_id"`
 	ToolName  string `json:"tool_name"`
 	ToolInput struct {
-		Command string `json:"command"`
+		Command                   string `json:"command"`
+		DangerouslyDisableSandbox bool   `json:"dangerouslyDisableSandbox"`
 	} `json:"tool_input"`
 	CWD string `json:"cwd"`
 }
@@ -75,6 +76,11 @@ func runPreflightHook() error {
 
 	// Only intercept Bash tool calls
 	if input.ToolName != "Bash" {
+		return nil
+	}
+
+	// Allow through if the LLM is explicitly bypassing the sandbox
+	if input.ToolInput.DangerouslyDisableSandbox {
 		return nil
 	}
 
