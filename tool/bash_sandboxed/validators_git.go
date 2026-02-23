@@ -24,9 +24,10 @@ var gitLocalReadSubcommands = map[string]bool{
 	"ls-files":  true,
 	"ls-tree":   true,
 	"cat-file":  true,
-	"name-rev":  true,
-	"config":    true,
-	"reflog":    true,
+	"name-rev":    true,
+	"merge-base":  true,
+	"config":      true,
+	"reflog":      true,
 }
 
 // gitLocalWriteSubcommands are subcommands that modify local repo state.
