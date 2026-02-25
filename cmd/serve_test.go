@@ -236,11 +236,11 @@ func TestBashSandboxedTool_TimeoutExceedsMaximum(t *testing.T) {
 	}
 }
 
-func TestBashSandboxedTool_RuntimeErrorContainsFallbackHint(t *testing.T) {
+func TestBashSandboxedTool_NormalExitNoFallbackHint(t *testing.T) {
 	c := setupClient(t)
 	ctx := context.Background()
 
-	// `false` is an allowed command that always exits with status 1
+	// `false` is an allowed command that always exits with status 1 (normal failure)
 	result, err := c.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      "bash",
@@ -255,8 +255,8 @@ func TestBashSandboxedTool_RuntimeErrorContainsFallbackHint(t *testing.T) {
 	}
 	if len(result.Content) > 0 {
 		if text, ok := result.Content[0].(mcp.TextContent); ok {
-			if !strings.Contains(text.Text, "dangerouslyDisableSandbox") {
-				t.Fatalf("expected fallback hint in runtime error, got: %q", text.Text)
+			if strings.Contains(text.Text, "dangerouslyDisableSandbox") {
+				t.Fatalf("normal exit errors should NOT contain fallback hint, got: %q", text.Text)
 			}
 		}
 	}

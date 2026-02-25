@@ -17,6 +17,22 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
+// CommandFailedError is returned when a command passes validation and starts
+// executing but exits with a non-zero status or fails during execution.
+// Use errors.As to distinguish this from validation errors.
+type CommandFailedError struct {
+	Err    error
+	Output string
+}
+
+func (e *CommandFailedError) Error() string {
+	return fmt.Sprintf("command failed: %v\noutput: %s", e.Err, e.Output)
+}
+
+func (e *CommandFailedError) Unwrap() error {
+	return e.Err
+}
+
 // Sandbox executes bash commands after parsing and validating them against
 // the built-in allowlist plus any extra commands from config.
 type Sandbox struct {
@@ -669,7 +685,7 @@ func (s *Sandbox) executeWithInterp(ctx context.Context, f *syntax.File, workDir
 	err = runner.Run(ctx, f)
 	output := out.String()
 	if err != nil {
-		return output, fmt.Errorf("command failed: %w\noutput: %s", err, output)
+		return output, &CommandFailedError{Err: err, Output: output}
 	}
 	return output, nil
 }

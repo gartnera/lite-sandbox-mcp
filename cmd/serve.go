@@ -2,16 +2,17 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
+	"mvdan.cc/sh/v3/interp"
 
 	"github.com/gartnera/lite-sandbox/config"
 	"github.com/gartnera/lite-sandbox/internal/imds"
@@ -94,7 +95,9 @@ func newMCPServer(sandbox *bash_sandboxed.Sandbox) *server.MCPServer {
 		output, err := sandbox.Execute(timeoutCtx, command, cwd, readPaths, writePaths)
 		if err != nil {
 			errMsg := err.Error()
-			if strings.HasPrefix(errMsg, "command failed:") {
+			var cmdErr *bash_sandboxed.CommandFailedError
+			var exitStatus interp.ExitStatus
+			if errors.As(err, &cmdErr) && !errors.As(err, &exitStatus) {
 				errMsg += runtimeErrorFallbackHint
 			}
 			return mcp.NewToolResultError(errMsg), nil
