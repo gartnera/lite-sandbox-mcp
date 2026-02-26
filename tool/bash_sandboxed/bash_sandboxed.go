@@ -434,8 +434,8 @@ func (s *Sandbox) validateWithFunctions(f *syntax.File, declaredFuncs map[string
 				return false
 			}
 		case *syntax.ProcSubst:
-			validationErr = fmt.Errorf("process substitutions are not allowed")
-			return false
+			// Allowed: the walker recurses into the substitution's statements,
+			// so all commands inside are validated against the whitelist.
 		case *syntax.CoprocClause:
 			validationErr = fmt.Errorf("coprocesses are not allowed")
 			return false

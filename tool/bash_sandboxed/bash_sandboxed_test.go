@@ -295,13 +295,36 @@ func TestValidate_BlockedCommands(t *testing.T) {
 	}
 }
 
-func TestValidate_BlockedProcSubst(t *testing.T) {
+func TestValidate_AllowedProcSubst(t *testing.T) {
 	tests := []struct {
 		name    string
 		command string
 	}{
-		{"process substitution input", "diff <(echo a) <(echo b)"},
-		{"process substitution output", "echo hello > >(cat)"},
+		{"input substitution with allowed commands", "diff <(echo a) <(echo b)"},
+		{"output substitution with allowed command", "echo hello > >(cat)"},
+		{"sort with two process substitutions", "comm <(sort file1) <(sort file2)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := newTestSandbox().validate(f); err != nil {
+				t.Fatalf("expected process substitution to be allowed, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidate_BlockedProcSubst(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		errMsg  string
+	}{
+		{"blocked command inside input substitution", `diff <(python3 script.py) <(echo b)`, `command "python3" is not allowed`},
+		{"blocked command inside output substitution", `echo hello > >(python3 script.py)`, `command "python3" is not allowed`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -311,7 +334,10 @@ func TestValidate_BlockedProcSubst(t *testing.T) {
 			}
 			err = newTestSandbox().validate(f)
 			if err == nil {
-				t.Fatal("expected validation error for process substitution")
+				t.Fatal("expected validation error for blocked command in process substitution")
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
 			}
 		})
 	}
