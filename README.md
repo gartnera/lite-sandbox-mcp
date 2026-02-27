@@ -211,10 +211,10 @@ An optional OS-level sandbox provides an additional layer of isolation on top of
 - **macOS** — `sandbox-exec` with dynamically generated SBPL profiles
 
 **Architecture:**
-- **Worker pool** — Long-lived sandboxed processes (default: 2 workers) that accept gob-encoded commands over stdin/stdout
-- **Process reuse** — Workers execute multiple commands without restarting the sandbox, reducing overhead
-- **Automatic recovery** — Dead workers are detected and replaced automatically
-- **Die-with-parent** — Workers are killed if the MCP server exits
+- **Long-lived worker** — A single sandboxed process that accepts gob-encoded commands over stdin/stdout
+- **Process reuse** — The worker executes multiple commands without restarting the sandbox, reducing overhead
+- **Automatic recovery** — A dead worker is detected and replaced automatically
+- **Die-with-parent** — The worker is killed if the MCP server exits
 
 **Configuration:**
 
@@ -222,7 +222,6 @@ Enable via config file (Linux: `~/.config/lite-sandbox/config.yaml`, macOS: `~/L
 
 ```yaml
 os_sandbox: true          # Enable OS-level sandboxing (default: false)
-os_sandbox_workers: 4     # Worker pool size (default: 2)
 ```
 
 Or via CLI:
