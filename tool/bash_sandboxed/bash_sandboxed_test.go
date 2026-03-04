@@ -500,6 +500,151 @@ func TestValidate_ExtraCommands(t *testing.T) {
 	}
 }
 
+func TestValidate_ExtraCommandsSubcommand(t *testing.T) {
+	tests := []struct {
+		name        string
+		extraCmds   []string
+		command     string
+		wantErr     bool
+		errSubstr   string
+	}{
+		{
+			name:      "pnpx allowed when exact entry matches",
+			extraCmds: []string{"pnpx prettier"},
+			command:   "pnpx prettier --check .",
+			wantErr:   false,
+		},
+		{
+			name:      "pnpx blocked when package not in list",
+			extraCmds: []string{"pnpx prettier"},
+			command:   "pnpx cowsay hello",
+			wantErr:   true,
+			errSubstr: `"pnpx" is not allowed`,
+		},
+		{
+			name:      "pnpx allowed with multiple entries",
+			extraCmds: []string{"pnpx prettier", "pnpx eslint"},
+			command:   "pnpx eslint .",
+			wantErr:   false,
+		},
+		{
+			name:      "pnpx second package blocked when not in list",
+			extraCmds: []string{"pnpx prettier", "pnpx eslint"},
+			command:   "pnpx cowsay hello",
+			wantErr:   true,
+			errSubstr: `"pnpx" is not allowed`,
+		},
+		{
+			name:      "bare pnpx entry allows any package",
+			extraCmds: []string{"pnpx"},
+			command:   "pnpx cowsay hello",
+			wantErr:   false,
+		},
+		{
+			name:      "pnpx no args allowed (prints help)",
+			extraCmds: []string{"pnpx prettier"},
+			command:   "pnpx",
+			wantErr:   false,
+		},
+		{
+			name:      "pnpx only flags allowed (prints help)",
+			extraCmds: []string{"pnpx prettier"},
+			command:   "pnpx --version",
+			wantErr:   false,
+		},
+		{
+			name:      "subcommand restriction applies to any command not just pnpx",
+			extraCmds: []string{"curl https://example.com"},
+			command:   "curl https://example.com",
+			wantErr:   false,
+		},
+		{
+			name:      "subcommand restriction blocks different first arg",
+			extraCmds: []string{"curl https://example.com"},
+			command:   "curl https://evil.com",
+			wantErr:   true,
+			errSubstr: `"curl" is not allowed`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewSandbox()
+			s.UpdateConfig(&config.Config{ExtraCommands: tt.extraCmds}, "")
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = s.validate(f)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Fatalf("expected error containing %q, got %q", tt.errSubstr, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestValidate_ExtraCommandsSkipsValidators(t *testing.T) {
+	// pnpm dlx is blocked by validatePnpmCommand when pnpm is enabled.
+	// Adding "pnpm dlx" to extra_commands should bypass that validator entirely.
+	pnpmEnabled := &config.RuntimesConfig{
+		Pnpm: &config.PnpmConfig{Enabled: boolPtr(true)},
+	}
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{
+		Runtimes:      pnpmEnabled,
+		ExtraCommands: []string{"pnpm dlx"},
+	}, "")
+
+	f, err := ParseBash("pnpm dlx cowsay hello")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if err := s.validate(f); err != nil {
+		t.Fatalf("expected pnpm dlx to be allowed via extra_commands, got: %v", err)
+	}
+}
+
+func TestValidate_ExtraCommandsSubcommandStillValidatesOtherSubcommands(t *testing.T) {
+	// "git push" in extra_commands bypasses the git validator for push,
+	// but other git subcommands must still be validated normally.
+	// Use remote_read=false so git fetch is blocked by the validator.
+	remoteFalse := false
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{
+		Git:           &config.GitConfig{RemoteRead: &remoteFalse},
+		ExtraCommands: []string{"git push"},
+	}, "")
+
+	// git push is allowed (validator skipped via extra_commands).
+	f, err := ParseBash("git push origin main")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if err := s.validate(f); err != nil {
+		t.Fatalf("expected git push to be allowed via extra_commands, got: %v", err)
+	}
+
+	// git fetch still goes through validateGitCommand and is blocked.
+	f, err = ParseBash("git fetch origin")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if err := s.validate(f); err == nil {
+		t.Fatal("expected git fetch to be blocked by git validator")
+	} else if !strings.Contains(err.Error(), "remote") {
+		t.Fatalf("expected remote-related error, got: %v", err)
+	}
+}
+
 func TestConfigPaths(t *testing.T) {
 	s := NewSandbox()
 

@@ -39,6 +39,11 @@ type Sandbox struct {
 	mu               sync.RWMutex
 	cfg              *config.Config
 	extraCommands    map[string]bool
+	// extraSubCommands holds per-command first-arg restrictions parsed from
+	// extra_commands entries that contain a space (e.g. "pnpx prettier").
+	// A nil slice means no restriction (bare command entry); a non-nil slice
+	// means only those first args are allowed.
+	extraSubCommands map[string][]string
 	imdsEndpoint     string
 	runtimeReadPaths []string
 	osSandbox        bool
@@ -63,8 +68,17 @@ func NewSandbox() *Sandbox {
 // UpdateConfig replaces the sandbox configuration with the provided config.
 func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 	m := make(map[string]bool, len(cfg.ExtraCommands))
+	sub := make(map[string][]string)
 	for _, c := range cfg.ExtraCommands {
-		m[c] = true
+		// Entries may be "command" or "command subcommand" (space-separated).
+		// The latter restricts the command to only that first argument.
+		if idx := strings.IndexByte(c, ' '); idx > 0 {
+			cmd, firstArg := c[:idx], c[idx+1:]
+			m[cmd] = true
+			sub[cmd] = append(sub[cmd], firstArg)
+		} else {
+			m[c] = true
+		}
 	}
 	// Detect runtime paths for read-only access (e.g., GOPATH, GOCACHE, pnpm store)
 	runtimeReadPaths := detectRuntimeBinds(cfg.Runtimes)
@@ -75,6 +89,7 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 	s.mu.Lock()
 	s.cfg = cfg
 	s.extraCommands = m
+	s.extraSubCommands = sub
 	s.runtimeReadPaths = runtimeReadPaths
 
 	// Store worker config for lazy start / restart.
@@ -123,6 +138,15 @@ func (s *Sandbox) getExtraCommands() map[string]bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.extraCommands
+}
+
+// getExtraSubCommands returns the per-command first-arg restriction map.
+// A nil slice for a command means no restriction (any first arg allowed).
+// A non-nil slice means only those first args are permitted.
+func (s *Sandbox) getExtraSubCommands() map[string][]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.extraSubCommands
 }
 
 // SetIMDSEndpoint sets the IMDS endpoint URL for AWS credential fetching.
@@ -391,6 +415,7 @@ func (s *Sandbox) validateWithWorkDir(f *syntax.File, workDir string) error {
 // a set of declared function names to allow in addition to the command whitelist.
 func (s *Sandbox) validateWithFunctions(f *syntax.File, declaredFuncs map[string]bool) error {
 	extra := s.getExtraCommands()
+	extraSub := s.getExtraSubCommands()
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
 		if validationErr != nil {
@@ -415,16 +440,24 @@ func (s *Sandbox) validateWithFunctions(f *syntax.File, declaredFuncs map[string
 					validationErr = fmt.Errorf("dynamic command names are not allowed")
 					return false
 				}
-				if !allowedCommands[cmdName] && !extra[cmdName] && !declaredFuncs[cmdName] {
+				// Check whether this command is allowed via extra_commands.
+				// If extra_commands has subcommand restrictions (e.g. "pnpx prettier"),
+				// the command only matches when the first non-flag argument matches.
+				inExtra := extra[cmdName] && extraSubCommandMatches(extraSub, cmdName, n.Args)
+				if !allowedCommands[cmdName] && !inExtra && !declaredFuncs[cmdName] {
 					if !s.getConfig().LocalBinaryExecution.IsEnabled() || !isScriptPath(cmdName) {
 						validationErr = fmt.Errorf("command %q is not allowed", cmdName)
 						return false
 					}
 				}
-				if validator, ok := commandArgValidators[cmdName]; ok {
-					if err := validator(s, n.Args); err != nil {
-						validationErr = err
-						return false
+				// Skip per-command validators for commands allowed via extra_commands —
+				// the user has explicitly opted in to those commands.
+				if !inExtra {
+					if validator, ok := commandArgValidators[cmdName]; ok {
+						if err := validator(s, n.Args); err != nil {
+							validationErr = err
+							return false
+						}
 					}
 				}
 			}
@@ -449,6 +482,34 @@ func (s *Sandbox) validateWithFunctions(f *syntax.File, declaredFuncs map[string
 // Returns empty string if the command name cannot be statically determined.
 func extractCommandName(w *syntax.Word) string {
 	return w.Lit()
+}
+
+// extraSubCommandMatches reports whether a command invocation satisfies any
+// subcommand restriction registered for cmdName in extraSub.
+//
+//   - If extraSub has no entry for cmdName, the bare command is in extra_commands
+//     with no restriction, so it always matches (returns true).
+//   - If extraSub has an entry, the first non-flag argument in args must appear
+//     in the allowed list.
+func extraSubCommandMatches(extraSub map[string][]string, cmdName string, args []*syntax.Word) bool {
+	allowed, hasRestriction := extraSub[cmdName]
+	if !hasRestriction {
+		return true // bare "cmd" entry, no subcommand restriction
+	}
+	// Find first non-flag argument (the subcommand / package name).
+	for _, arg := range args[1:] {
+		lit := arg.Lit()
+		if lit == "" || strings.HasPrefix(lit, "-") {
+			continue
+		}
+		for _, a := range allowed {
+			if a == lit {
+				return true
+			}
+		}
+		return false // first non-flag arg not in allowed list
+	}
+	return true // no subcommand argument — safe (prints help)
 }
 
 // ValidateCommand parses and validates a bash command without executing it.
