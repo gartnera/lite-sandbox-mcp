@@ -600,7 +600,7 @@ func (s *Sandbox) validateScriptFile(scriptPath, workDir string, readAllowedPath
 	if err != nil {
 		return nil // fail-open: unparseable scripts handled at runtime
 	}
-	if err := s.validate(sf); err != nil {
+	if err := s.validateWithWorkDir(sf, workDir); err != nil {
 		return fmt.Errorf("script %s: %w", scriptPath, err)
 	}
 	if err := validatePaths(sf, workDir, readAllowedPaths, writeAllowedPaths); err != nil {
