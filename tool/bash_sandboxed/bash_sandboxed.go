@@ -423,6 +423,7 @@ func (s *Sandbox) validateWithWorkDir(f *syntax.File, workDir string) error {
 func (s *Sandbox) validateWithFunctions(f *syntax.File, declaredFuncs map[string]bool) error {
 	extra := s.getExtraCommands()
 	extraSub := s.getExtraSubCommands()
+	bare := s.getBareExtraCommands()
 	var validationErr error
 	syntax.Walk(f, func(node syntax.Node) bool {
 		if validationErr != nil {
@@ -448,9 +449,10 @@ func (s *Sandbox) validateWithFunctions(f *syntax.File, declaredFuncs map[string
 					return false
 				}
 				// Check whether this command is allowed via extra_commands.
-				// If extra_commands has subcommand restrictions (e.g. "pnpx prettier"),
-				// the command only matches when the first non-flag argument matches.
-				inExtra := extra[cmdName] && extraSubCommandMatches(extraSub, cmdName, n.Args)
+				// Bare entries (no subcommand restriction) always match.
+				// Restricted entries (e.g. "pnpx prettier") only match when the
+				// first non-flag argument matches the restriction.
+				inExtra := extra[cmdName] && (bare[cmdName] || extraSubCommandMatches(extraSub, cmdName, n.Args))
 				if !allowedCommands[cmdName] && !inExtra && !declaredFuncs[cmdName] {
 					if !s.getConfig().LocalBinaryExecution.IsEnabled() || !isScriptPath(cmdName) {
 						validationErr = fmt.Errorf("command %q is not allowed", cmdName)

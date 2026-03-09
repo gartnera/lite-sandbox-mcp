@@ -728,6 +728,38 @@ func TestValidateCommand_ExtraCommandBypass(t *testing.T) {
 	}
 }
 
+func TestValidate_BareExtraCommandInsideSubshell(t *testing.T) {
+	// When both a bare "fvm" and a restricted "fvm flutter test" entry exist,
+	// the bare entry must win so that "fvm flutter test ..." passes validation
+	// even when appearing inside a command substitution or complex command.
+	s := NewSandbox()
+	s.UpdateConfig(&config.Config{
+		ExtraCommands: []string{"fvm", "fvm flutter test"},
+	}, "")
+
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"bare invocation", "fvm flutter test test/foo_test.dart"},
+		{"inside command substitution", `result=$(fvm flutter test test/foo_test.dart 2>&1)`},
+		{"after cd in compound", "cd /tmp && fvm flutter test test/foo_test.dart"},
+		{"any subcommand allowed", "fvm --version"},
+		{"any subcommand allowed 2", "fvm spawn flutter run"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBash(tt.command)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := s.validate(f); err != nil {
+				t.Fatalf("expected bare extra entry to allow command, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestConfigPaths(t *testing.T) {
 	s := NewSandbox()
 
