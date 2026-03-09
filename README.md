@@ -268,7 +268,7 @@ Commands execute inside a dynamically generated SBPL (Scheme-based Profile Langu
 **Isolation features:**
 - **Writable working directory** — Only the project directory (and its resolved symlink) is writable
 - **Writable temp directories** — `/tmp`, `/private/tmp`, `/var/folders`, and `/private/var/folders` are writable (required for build caches and `TMPDIR`)
-- **SSH key protection** — `~/.ssh` is always denied read access
+- **SSH key protection** — SSH private keys in `~/.ssh` are always denied read access; `known_hosts`, `config`, and `authorized_keys` remain accessible
 - **AWS credential protection** — `~/.aws` is denied read access when AWS IMDS is configured
 - **Network access** — Network access is preserved
 - **Process execution** — Full process execution is allowed (enforcement is at the filesystem level)

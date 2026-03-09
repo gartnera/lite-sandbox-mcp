@@ -91,12 +91,42 @@ type Worker struct {
 	pendingMu sync.Mutex
 }
 
+// sshAllowedFiles are the non-key files in ~/.ssh that remain accessible in the sandbox.
+var sshAllowedFiles = map[string]bool{
+	"known_hosts":      true,
+	"known_hosts.old":  true,
+	"config":           true,
+	"authorized_keys":  true,
+	"authorized_keys2": true,
+}
+
+// getSSHPrivateKeyPaths returns paths to files in sshDir that look like private keys.
+// It allows known_hosts, config, authorized_keys, and *.pub files through.
+func getSSHPrivateKeyPaths(sshDir string) []string {
+	entries, err := os.ReadDir(sshDir)
+	if err != nil {
+		return nil
+	}
+	var keys []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if sshAllowedFiles[name] || strings.HasSuffix(name, ".pub") {
+			continue
+		}
+		keys = append(keys, filepath.Join(sshDir, name))
+	}
+	return keys
+}
+
 // StartWorker starts a new sandbox worker process.
 // The worker runs the "lite-sandbox sandbox-worker" subcommand inside a platform-specific sandbox.
 // On Linux, this uses bwrap. On macOS, this uses sandbox-exec with SBPL profiles.
 // extraBinds specifies additional writable paths to bind mount (e.g., for runtimes).
 // blockAWSCredentials specifies whether to block ~/.aws directory.
-// Note: ~/.ssh is ALWAYS blocked regardless of this parameter.
+// Note: ~/.ssh private keys are ALWAYS blocked regardless of this parameter.
 func StartWorker(ctx context.Context, workDir string, extraBinds []string, blockAWSCredentials bool) (*Worker, error) {
 	// Find our own binary path to pass to the sandbox
 	self, err := os.Executable()
@@ -168,13 +198,13 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string, block
 			"--tmpfs", "/tmp",
 		}
 
-		// Block credential directories with empty tmpfs overlays
+		// Block credential files/directories with overlays
 		homeDir, err := os.UserHomeDir()
 		if err == nil {
-			// Always block ~/.ssh
+			// Block SSH private keys but allow known_hosts and config
 			sshDir := filepath.Join(homeDir, ".ssh")
-			if _, err := os.Stat(sshDir); err == nil {
-				args = append(args, "--tmpfs", sshDir)
+			for _, keyPath := range getSSHPrivateKeyPaths(sshDir) {
+				args = append(args, "--ro-bind", "/dev/null", keyPath)
 			}
 
 			// Conditionally block ~/.aws
@@ -279,7 +309,7 @@ func StartWorker(ctx context.Context, workDir string, extraBinds []string, block
 // The profile allows read-only access to the entire filesystem, but restricts writes
 // to specific directories (workDir, extraBinds, and system temp directories).
 // blockAWSCredentials controls whether ~/.aws is blocked.
-// Note: ~/.ssh is ALWAYS blocked regardless of blockAWSCredentials.
+// Note: ~/.ssh private keys are ALWAYS blocked regardless of blockAWSCredentials.
 func generateSBPLProfile(workDir string, extraBinds []string, blockAWSCredentials bool) string {
 	var sb strings.Builder
 
@@ -294,10 +324,12 @@ func generateSBPLProfile(workDir string, extraBinds []string, blockAWSCredential
 		return sb.String()
 	}
 
-	// Deny access to credential directories (must come after allow default)
-	// Always block ~/.ssh
+	// Deny access to credential files (must come after allow default)
+	// Block SSH private keys but allow known_hosts and config
 	sshDir := filepath.Join(homeDir, ".ssh")
-	sb.WriteString(fmt.Sprintf("(deny file-read* (subpath \"%s\"))\n", sshDir))
+	for _, keyPath := range getSSHPrivateKeyPaths(sshDir) {
+		sb.WriteString(fmt.Sprintf("(deny file-read* (literal \"%s\"))\n", keyPath))
+	}
 
 	// Conditionally block ~/.aws
 	if blockAWSCredentials {

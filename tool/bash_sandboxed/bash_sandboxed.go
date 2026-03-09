@@ -124,7 +124,7 @@ func (s *Sandbox) UpdateConfig(cfg *config.Config, workDir string) {
 // shouldBlockAWSCredentials determines if ~/.aws/ should be blocked.
 // Returns true if AWS is configured to use IMDS (force_profile set).
 // Returns false if AWS allows raw credentials or is not configured.
-// Note: ~/.ssh/ is ALWAYS blocked regardless of this setting.
+// Note: ~/.ssh/ private keys are ALWAYS blocked regardless of this setting.
 func shouldBlockAWSCredentials(awsCfg *config.AWSConfig) bool {
 	if awsCfg == nil {
 		return false

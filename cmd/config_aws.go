@@ -32,13 +32,13 @@ var awsShowCmd = &cobra.Command{
 			fmt.Println("  Description: AWS CLI reads from ~/.aws/credentials directly")
 			fmt.Println("  Security: Less secure (long-term credentials)")
 			fmt.Println("  ~/.aws: Accessible")
-			fmt.Println("  ~/.ssh: Blocked")
+			fmt.Println("  ~/.ssh: Private keys blocked")
 		} else if cfg.AWS.UsesIMDS() {
 			fmt.Printf("  Mode: force_profile (%s)\n", cfg.AWS.IMDSProfile())
 			fmt.Println("  Description: AWS CLI uses IMDS server with temporary credentials")
 			fmt.Println("  Security: More secure (1-hour STS tokens)")
 			fmt.Println("  ~/.aws: Blocked")
-			fmt.Println("  ~/.ssh: Blocked")
+			fmt.Println("  ~/.ssh: Private keys blocked")
 		} else {
 			fmt.Println("  Mode: disabled")
 			fmt.Println("  AWS CLI commands are not allowed")
@@ -57,7 +57,7 @@ In this mode:
 - AWS CLI reads credentials from ~/.aws/credentials directly
 - No IMDS server is started
 - ~/.aws is NOT blocked (accessible to commands)
-- ~/.ssh is ALWAYS blocked
+- ~/.ssh private keys are ALWAYS blocked
 - Uses long-term credentials (no automatic rotation)
 
 This mode is simpler but less secure. Use for development/testing only.`,
@@ -82,7 +82,7 @@ This mode is simpler but less secure. Use for development/testing only.`,
 
 		fmt.Println("AWS configured for raw credential access")
 		fmt.Println("  ~/.aws/credentials will be readable by AWS CLI")
-		fmt.Println("  ~/.ssh will remain blocked")
+		fmt.Println("  ~/.ssh private keys will remain blocked")
 		return nil
 	},
 }
@@ -96,7 +96,7 @@ In this mode:
 - AWS CLI gets credentials from local IMDS server
 - IMDS server uses specified profile to fetch temporary STS credentials
 - ~/.aws is BLOCKED (not accessible to commands)
-- ~/.ssh is ALWAYS blocked
+- ~/.ssh private keys are ALWAYS blocked
 - Uses temporary 1-hour STS session tokens
 - Credentials auto-refresh before expiry
 
@@ -125,7 +125,7 @@ This mode is more secure and recommended for production use.`,
 		fmt.Printf("AWS configured to force profile: %s\n", profile)
 		fmt.Println("  IMDS server will provide temporary credentials")
 		fmt.Println("  ~/.aws will be blocked")
-		fmt.Println("  ~/.ssh will remain blocked")
+		fmt.Println("  ~/.ssh private keys will remain blocked")
 		return nil
 	},
 }
